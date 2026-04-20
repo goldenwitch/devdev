@@ -1,0 +1,31 @@
+# DevDev: Architecture & Experience Specification
+
+**Values:** Empiricism. Brevity. Wit.
+**Mission:** A portable, daemonized agent for the developer's brain. DevDev silently monitors workflows and uses a headless Copilot CLI sandbox to enforce personal technical boundaries, intervening only when necessary.
+
+---
+
+## 🔒 Locked Decisions (The "100% Clear" List)
+
+### 1. The Vibe Check (Configuration)
+* **Format:** Preferences are stored as standard Markdown files (`.md`), not rigid YAML or custom DSLs. 
+* **Creation:** Initialized via a natural language conversation. The system acts as a scribe, translating the developer's "vibes" into distinct, file-scoped preference documents.
+
+### 2. The Two-Stage Router (Lazy Loading Context)
+* **The Scout (Lightweight LLM):** Evaluates an incoming event (e.g., a PR diff) and generates a list of file pointers (paths) referencing the specific preference files that apply to that context.
+* **The Heavy (Copilot CLI via ACP):** The Copilot CLI is spawned in **ACP (Agent Communication Protocol) mode** — a structured JSON-based RPC protocol over stdio. DevDev sends the event context and preference file pointers to the CLI, which reasons about them using its native tool-calling. Tool calls are intercepted via ACP hooks and routed through the virtual execution engine. This doesn't mean it can't access other files and preferences if it thinks they are relevant.
+
+### 3. The Sandbox (Execution Engine)
+* **Pure Virtual Workspace:** The agent operates inside a fully virtualized environment — a pure in-memory filesystem with its own execution engine. No host filesystem interaction. The target repo is loaded into memory at evaluation start and discarded on completion.
+* **In-Memory Filesystem:** All file operations (read, write, stat, list, glob) are served from a pure in-memory filesystem. The repo snapshot is loaded into this space. The agent can freely create, modify, and delete files without any risk to the host or real repository.
+* **Virtual Shell & Toolchain:** The agent's shell commands (the bash-like commands it was trained with) are intercepted and executed by a built-in shell parser and tool execution engine. Core utilities (grep, find, cat, ls, sed, etc.) are compiled to portable WebAssembly modules and run against the in-memory filesystem. Pipes, redirects, globs, and environment variables work as the agent expects.
+* **Git as a First-Class Virtual Tool:** Git operations (diff, log, status, blame, etc.) are provided as a built-in virtual command backed by a native git library operating directly on the in-memory filesystem. The agent can inspect repository history and structure without shelling out to a real `git` binary.
+* **Workspace Size Limit:** The in-memory workspace defaults to a **2 GB** cap. Users can override this with a `--workspace-limit` flag for larger monorepos.
+* **Copilot CLI Integration (ACP):** DevDev spawns the GitHub Copilot CLI as a subprocess in ACP (Agent Communication Protocol) mode — a structured, versioned RPC protocol over stdio. When the agent issues tool-use commands, DevDev intercepts them via the `preToolUse` hook and routes them through the virtual execution engine. No PTY hacking, no terminal escape sequence parsing — clean JSON in, clean JSON out. Authentication in daemon mode is handled via fine-grained PAT (`GH_TOKEN`) or existing `gh auth` session.
+* **Language Runtimes (Future):** Running language-specific tools (linters, type-checkers, test runners) inside the virtual workspace is a high-value goal under active exploration. The architecture is designed to accommodate additional execution backends over time.
+
+### 4. The Silent Watcher (Daemon & UX)
+* **Idempotency:** A background polling loop checks for state changes (PRs, Jira tickets). A local ledger ensures DevDev never evaluates or complains about the same exact commit or ticket state twice.
+* **Private Intervention:** DevDev never acts as a dictator to the team. Rule violations result in a private, asynchronous notification to the user (e.g., a drafted PR comment) requiring explicit 1-click approval to deploy. Users can run with a --rude flag to disable approval.
+
+---

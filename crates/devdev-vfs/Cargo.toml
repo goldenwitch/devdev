@@ -1,0 +1,12 @@
+[package]
+name = "devdev-vfs"
+description = "In-memory virtual filesystem for DevDev sandbox"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+thiserror = { workspace = true }
+globset = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

@@ -1,0 +1,29 @@
+# Build artifacts
+/target/
+**/target/
+
+# Local task-runner / tee outputs (cargo check/test/clippy captures)
+*.log
+
+# Compiled WASM tool binaries (produced by tools/build-tools.{sh,ps1})
+/tools/wasm/*.wasm
+
+# Stale wasm-tools target from earlier layout
+/wasm-tools/target/
+
+# Scratch / tempfile output
+/tests/fixtures/_scratch/
+/tmp/
+/target/tmp/
+
+# IDE
+.idea/
+.vscode/settings.json
+.vscode/launch.json
+*.code-workspace
+.history/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini

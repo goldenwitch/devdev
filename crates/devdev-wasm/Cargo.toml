@@ -1,0 +1,17 @@
+[package]
+name = "devdev-wasm"
+description = "WASM runtime engine and tool registry for DevDev sandbox"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+devdev-vfs = { path = "../devdev-vfs" }
+wasmtime = { workspace = true }
+wasmtime-wasi = { workspace = true }
+thiserror = { workspace = true }
+regex = { workspace = true }
+globset = { workspace = true }
+similar = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

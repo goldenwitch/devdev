@@ -1,0 +1,14 @@
+[package]
+name = "devdev-shell"
+description = "Shell parser, builtins, and pipeline executor for DevDev sandbox"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+devdev-vfs = { path = "../devdev-vfs" }
+devdev-wasm = { path = "../devdev-wasm" }
+devdev-git = { path = "../devdev-git" }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

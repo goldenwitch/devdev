@@ -1,0 +1,21 @@
+[package]
+name = "devdev-acp"
+description = "ACP protocol client and hook handlers for DevDev"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+devdev-vfs = { path = "../devdev-vfs" }
+devdev-shell = { path = "../devdev-shell" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+devdev-git = { path = "../devdev-git" }
+devdev-wasm = { path = "../devdev-wasm" }
