@@ -66,6 +66,11 @@ impl VirtualRepo {
 
         write_vfs_dir_to_host(vfs, &git_dir, &temp_git)?;
 
+        // Write working-tree files (everything under repo_root that is NOT
+        // .git/) so that `git status` and `git diff` can compare the index
+        // against the actual VFS working tree.
+        write_worktree_to_host(vfs, repo_root, temp_root)?;
+
         // Open repository
         let repo = git2::Repository::open(temp_root)?;
 
@@ -136,5 +141,44 @@ fn write_vfs_dir_to_host(
         }
     }
 
+    Ok(())
+}
+
+/// Write working-tree files from VFS to host, skipping `.git/`.
+///
+/// This gives libgit2 a real working tree to diff against the index, so
+/// `git status` and `git diff` produce correct output reflecting VFS state.
+fn write_worktree_to_host(
+    vfs: &MemFs,
+    repo_root: &str,
+    host_root: &std::path::Path,
+) -> Result<(), GitLoadError> {
+    let entries = vfs.list(Path::new(repo_root))?;
+    for entry in entries {
+        if entry.name == ".git" {
+            continue; // already written separately
+        }
+        let vfs_path = if repo_root == "/" {
+            format!("/{}", entry.name)
+        } else {
+            format!("{repo_root}/{}", entry.name)
+        };
+        let host_path = host_root.join(&entry.name);
+        match entry.file_type {
+            devdev_vfs::FileType::Directory => {
+                write_vfs_dir_to_host(vfs, &vfs_path, &host_path)?;
+            }
+            devdev_vfs::FileType::File => {
+                let content = vfs.read(Path::new(&vfs_path))?;
+                std::fs::write(&host_path, content)?;
+            }
+            devdev_vfs::FileType::Symlink => {
+                // Best-effort: resolve through VFS and write as regular file
+                if let Ok(content) = vfs.read(Path::new(&vfs_path)) {
+                    std::fs::write(&host_path, content)?;
+                }
+            }
+        }
+    }
     Ok(())
 }

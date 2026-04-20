@@ -36,7 +36,7 @@ fn fs_with(files: &[(&str, &str)]) -> MemFs {
 /// AC: `execute("grep", &["-rn", "TODO", "src/"])` searches the VFS tree.
 #[test]
 fn grep_recursive_matches_tree() {
-    let fs = fs_with(&[
+    let mut fs = fs_with(&[
         ("/src/a.rs", "fn main() {\n    // TODO first\n}\n"),
         ("/src/sub/b.rs", "// nothing here\n"),
         ("/src/sub/c.rs", "let x = 1; // TODO second\n"),
@@ -48,7 +48,7 @@ fn grep_recursive_matches_tree() {
         &[],
         &env(),
         "/",
-        &fs,
+        &mut fs,
     );
     assert_eq!(r.exit_code, 0);
     let stdout = String::from_utf8(r.stdout).unwrap();
@@ -60,7 +60,7 @@ fn grep_recursive_matches_tree() {
 /// AC: `grep -n foo file.txt` output format is `path:line:content`.
 #[test]
 fn grep_line_number_format() {
-    let fs = fs_with(&[("/x.txt", "one\nfoo line\nthree\nfoo again\n")]);
+    let mut fs = fs_with(&[("/x.txt", "one\nfoo line\nthree\nfoo again\n")]);
     let reg = WasmToolRegistry::new().unwrap();
     let r = reg.execute(
         "grep",
@@ -68,7 +68,7 @@ fn grep_line_number_format() {
         &[],
         &env(),
         "/",
-        &fs,
+        &mut fs,
     );
     assert_eq!(r.exit_code, 0);
     let stdout = String::from_utf8(r.stdout).unwrap();
@@ -79,7 +79,7 @@ fn grep_line_number_format() {
 /// AC: `grep` exits 1 when pattern not found.
 #[test]
 fn grep_no_match_exit_one() {
-    let fs = fs_with(&[("/x.txt", "just some text\n")]);
+    let mut fs = fs_with(&[("/x.txt", "just some text\n")]);
     let reg = WasmToolRegistry::new().unwrap();
     let r = reg.execute(
         "grep",
@@ -87,7 +87,7 @@ fn grep_no_match_exit_one() {
         &[],
         &env(),
         "/",
-        &fs,
+        &mut fs,
     );
     assert_eq!(r.exit_code, 1);
     assert!(r.stdout.is_empty());
@@ -96,7 +96,7 @@ fn grep_no_match_exit_one() {
 /// AC: `find . -name '*.rs' -type f` lists matching files.
 #[test]
 fn find_name_type_file() {
-    let fs = fs_with(&[
+    let mut fs = fs_with(&[
         ("/a.rs", "x"),
         ("/b.txt", "x"),
         ("/sub/c.rs", "x"),
@@ -109,7 +109,7 @@ fn find_name_type_file() {
         &[],
         &env(),
         "/",
-        &fs,
+        &mut fs,
     );
     assert_eq!(r.exit_code, 0);
     let lines: Vec<&str> = std::str::from_utf8(&r.stdout)
@@ -125,7 +125,7 @@ fn find_name_type_file() {
 /// AC: find respects `-maxdepth`.
 #[test]
 fn find_maxdepth_limits_recursion() {
-    let fs = fs_with(&[("/a.txt", "x"), ("/sub/b.txt", "x"), ("/sub/deep/c.txt", "x")]);
+    let mut fs = fs_with(&[("/a.txt", "x"), ("/sub/b.txt", "x"), ("/sub/deep/c.txt", "x")]);
     let reg = WasmToolRegistry::new().unwrap();
     let r = reg.execute(
         "find",
@@ -133,7 +133,7 @@ fn find_maxdepth_limits_recursion() {
         &[],
         &env(),
         "/",
-        &fs,
+        &mut fs,
     );
     assert_eq!(r.exit_code, 0);
     let out = String::from_utf8(r.stdout).unwrap();
@@ -145,7 +145,7 @@ fn find_maxdepth_limits_recursion() {
 /// AC: `diff a b` produces a unified diff.
 #[test]
 fn diff_unified_output() {
-    let fs = fs_with(&[
+    let mut fs = fs_with(&[
         ("/a.txt", "one\ntwo\nthree\n"),
         ("/b.txt", "one\nTWO\nthree\n"),
     ]);
@@ -156,7 +156,7 @@ fn diff_unified_output() {
         &[],
         &env(),
         "/",
-        &fs,
+        &mut fs,
     );
     assert_eq!(r.exit_code, 1);
     let out = String::from_utf8(r.stdout).unwrap();
@@ -168,9 +168,9 @@ fn diff_unified_output() {
 /// AC: `diff` returns 0 on identical files.
 #[test]
 fn diff_identical_exit_zero() {
-    let fs = fs_with(&[("/a", "same\n"), ("/b", "same\n")]);
+    let mut fs = fs_with(&[("/a", "same\n"), ("/b", "same\n")]);
     let reg = WasmToolRegistry::new().unwrap();
-    let r = reg.execute("diff", &args(&["a", "b"]), &[], &env(), "/", &fs);
+    let r = reg.execute("diff", &args(&["a", "b"]), &[], &env(), "/", &mut fs);
     assert_eq!(r.exit_code, 0);
     assert!(r.stdout.is_empty());
 }
@@ -180,9 +180,9 @@ fn diff_identical_exit_zero() {
 /// AC: unknown command returns exit 127 with "command not found" on stderr.
 #[test]
 fn unknown_command_exit_127() {
-    let fs = MemFs::new();
+    let mut fs = MemFs::new();
     let reg = WasmToolRegistry::new().unwrap();
-    let r = reg.execute("nonexistent", &[], &[], &env(), "/", &fs);
+    let r = reg.execute("nonexistent", &[], &[], &env(), "/", &mut fs);
     assert_eq!(r.exit_code, 127);
     assert!(r.stdout.is_empty());
     let stderr = String::from_utf8(r.stderr).unwrap();
@@ -192,9 +192,9 @@ fn unknown_command_exit_127() {
 /// AC: awk falls through to 127 (deferred to P2).
 #[test]
 fn awk_not_implemented_exit_127() {
-    let fs = MemFs::new();
+    let mut fs = MemFs::new();
     let reg = WasmToolRegistry::new().unwrap();
-    let r = reg.execute("awk", &args(&["{print}"]), &[], &env(), "/", &fs);
+    let r = reg.execute("awk", &args(&["{print}"]), &[], &env(), "/", &mut fs);
     assert_eq!(r.exit_code, 127);
     assert_eq!(
         String::from_utf8(r.stderr).unwrap(),
@@ -235,7 +235,7 @@ fn available_tools_merged() {
 #[test]
 #[ignore]
 fn cat_wasm_dispatch() {
-    let fs = MemFs::new();
+    let mut fs = MemFs::new();
     let reg = WasmToolRegistry::new().unwrap();
     let r = reg.execute(
         "cat",
@@ -243,8 +243,115 @@ fn cat_wasm_dispatch() {
         b"hello from cat\n",
         &env(),
         "/",
-        &fs,
+        &mut fs,
     );
     assert_eq!(r.exit_code, 0);
     assert_eq!(r.stdout, b"hello from cat\n");
+}
+
+// ── VFS bridge tests (require .wasm artifacts) ─────────────────
+
+/// AC: `cat file.txt` reads a file from the VFS via the WASI preopen bridge.
+/// This is the core proof that the VFS→tempdir→WASI preopens path works.
+#[test]
+#[ignore]
+fn cat_reads_vfs_file_via_bridge() {
+    let mut fs = fs_with(&[("/hello.txt", "bridged content\n")]);
+    let reg = WasmToolRegistry::new().unwrap();
+    let r = reg.execute(
+        "cat",
+        &args(&["cat", "/hello.txt"]),
+        &[],
+        &env(),
+        "/",
+        &mut fs,
+    );
+    assert_eq!(r.exit_code, 0, "stderr: {}", String::from_utf8_lossy(&r.stderr));
+    assert_eq!(String::from_utf8(r.stdout).unwrap(), "bridged content\n");
+}
+
+/// AC: `ls /src` lists VFS directory contents via the WASI preopen bridge.
+#[test]
+#[ignore]
+fn ls_lists_vfs_directory_via_bridge() {
+    let mut fs = fs_with(&[
+        ("/src/main.rs", "fn main() {}"),
+        ("/src/lib.rs", "// lib"),
+    ]);
+    let reg = WasmToolRegistry::new().unwrap();
+    let r = reg.execute(
+        "ls",
+        &args(&["ls", "/src"]),
+        &[],
+        &env(),
+        "/",
+        &mut fs,
+    );
+    assert_eq!(r.exit_code, 0, "stderr: {}", String::from_utf8_lossy(&r.stderr));
+    let out = String::from_utf8(r.stdout).unwrap();
+    assert!(out.contains("main.rs"), "got: {out}");
+    assert!(out.contains("lib.rs"), "got: {out}");
+}
+
+/// AC: `touch /new.txt` creates a file that is synced back to the VFS.
+#[test]
+#[ignore]
+fn touch_creates_file_synced_to_vfs() {
+    let mut fs = MemFs::new();
+    let reg = WasmToolRegistry::new().unwrap();
+    let r = reg.execute(
+        "touch",
+        &args(&["touch", "/created.txt"]),
+        &[],
+        &env(),
+        "/",
+        &mut fs,
+    );
+    assert_eq!(r.exit_code, 0, "stderr: {}", String::from_utf8_lossy(&r.stderr));
+    // The file should now exist in the VFS after sync-back.
+    assert!(fs.exists(Path::new("/created.txt")), "touch did not sync back to VFS");
+}
+
+/// AC: `cp src dst` copies a VFS file and syncs the copy back.
+#[test]
+#[ignore]
+fn cp_copies_file_synced_to_vfs() {
+    let mut fs = fs_with(&[("/original.txt", "payload\n")]);
+    let reg = WasmToolRegistry::new().unwrap();
+    let r = reg.execute(
+        "cp",
+        &args(&["cp", "/original.txt", "/copy.txt"]),
+        &[],
+        &env(),
+        "/",
+        &mut fs,
+    );
+    assert_eq!(r.exit_code, 0, "stderr: {}", String::from_utf8_lossy(&r.stderr));
+    assert!(fs.exists(Path::new("/copy.txt")), "cp did not sync back to VFS");
+    assert_eq!(
+        fs.read(Path::new("/copy.txt")).unwrap(),
+        b"payload\n",
+        "copied content mismatch",
+    );
+    // Original must still exist.
+    assert!(fs.exists(Path::new("/original.txt")));
+}
+
+/// AC: `rm /file.txt` deletes a VFS file and the deletion syncs back.
+#[test]
+#[ignore]
+fn rm_deletes_file_synced_to_vfs() {
+    let mut fs = fs_with(&[("/doomed.txt", "goodbye\n")]);
+    assert!(fs.exists(Path::new("/doomed.txt")));
+    let reg = WasmToolRegistry::new().unwrap();
+    let r = reg.execute(
+        "rm",
+        &args(&["rm", "/doomed.txt"]),
+        &[],
+        &env(),
+        "/",
+        &mut fs,
+    );
+    assert_eq!(r.exit_code, 0, "stderr: {}", String::from_utf8_lossy(&r.stderr));
+    assert!(!fs.exists(Path::new("/doomed.txt")), "rm did not sync deletion to VFS");
 }

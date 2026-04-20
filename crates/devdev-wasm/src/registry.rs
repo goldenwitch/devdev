@@ -7,6 +7,7 @@
 //! returns a uniform `ToolResult`.
 
 use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use devdev_vfs::MemFs;
@@ -46,7 +47,7 @@ pub trait ToolEngine: Send + Sync {
         stdin: &[u8],
         env: &HashMap<String, String>,
         cwd: &str,
-        fs: &MemFs,
+        fs: &mut MemFs,
     ) -> ToolResult;
 
     fn available_tools(&self) -> Vec<&str>;
@@ -194,7 +195,7 @@ impl ToolEngine for WasmToolRegistry {
         stdin: &[u8],
         env: &HashMap<String, String>,
         cwd: &str,
-        fs: &MemFs,
+        fs: &mut MemFs,
     ) -> ToolResult {
         // 1. Shim? Translate and recurse as the target tool.
         if let Some(&target) = self.shims.get(command) {
@@ -209,7 +210,7 @@ impl ToolEngine for WasmToolRegistry {
             return self.execute(target, &shim_args, stdin, env, cwd, fs);
         }
 
-        // 2. Native backend?
+        // 2. Native backend? (auto-reborrows &mut MemFs → &MemFs)
         if let Some(tool) = self.native.get(command) {
             return tool.execute(args, stdin, env, cwd, fs);
         }
@@ -217,7 +218,7 @@ impl ToolEngine for WasmToolRegistry {
         // 3. WASM backend? Resolve to the `&'static str` name first so
         //    downstream errors/logging reference the canonical identifier.
         if let Some(canonical) = WASM_TOOLS.iter().copied().find(|n| *n == command) {
-            return run_wasm(&self.state, canonical, args, stdin, env, cwd);
+            return run_wasm(&self.state, canonical, args, stdin, env, cwd, fs);
         }
 
         // 4. Command not found.
@@ -242,10 +243,9 @@ impl ToolEngine for WasmToolRegistry {
 /// Execute a WASM tool. Compiles the module on first invocation (see
 /// [`WasmState::ensure_loaded`]).
 ///
-/// For P0 the registry does **not** bridge the VFS into the sandbox: tools
-/// see an empty preopen, so they operate on stdin/stdout only. VFS-aware
-/// file arguments will be added alongside the shell executor work in
-/// capability 09, once the executor knows which paths a command touches.
+/// Bridges the in-memory VFS to WASI by materializing contents to a temp
+/// directory, running the WASM module with that directory as the preopened
+/// root, and syncing any filesystem mutations back to the VFS.
 fn run_wasm(
     state: &Mutex<WasmState>,
     command: &'static str,
@@ -253,43 +253,83 @@ fn run_wasm(
     stdin: &[u8],
     env: &HashMap<String, String>,
     cwd: &str,
+    fs: &mut MemFs,
 ) -> ToolResult {
-    let mut guard = match state.lock() {
-        Ok(g) => g,
-        Err(p) => p.into_inner(),
+    // 1. Materialize VFS to a temp directory for WASI preopens.
+    let tempdir = match tempfile::TempDir::new() {
+        Ok(t) => t,
+        Err(e) => {
+            return ToolResult {
+                stdout: Vec::new(),
+                stderr: format!("{command}: failed to create temp dir: {e}\n").into_bytes(),
+                exit_code: 1,
+            };
+        }
     };
-    if let Err(e) = guard.ensure_loaded(command) {
+
+    let pre_run_files = collect_vfs_files(fs);
+
+    if let Err(e) = materialize_vfs(fs, tempdir.path()) {
         return ToolResult {
             stdout: Vec::new(),
-            stderr: format!("{command}: {e}\n").into_bytes(),
+            stderr: format!("{command}: failed to materialize VFS: {e}\n").into_bytes(),
             exit_code: 1,
         };
     }
-    let cfg = WasmRunConfig {
-        module_name: command,
-        args,
-        stdin,
-        env,
-        cwd,
-        preopened_dir: None,
+
+    // 2. Compile module (lazy) and run under WASI with the temp dir as `/`.
+    let result = {
+        let mut guard = match state.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        if let Err(e) = guard.ensure_loaded(command) {
+            return ToolResult {
+                stdout: Vec::new(),
+                stderr: format!("{command}: {e}\n").into_bytes(),
+                exit_code: 1,
+            };
+        }
+        let cfg = WasmRunConfig {
+            module_name: command,
+            args,
+            stdin,
+            env,
+            cwd,
+            preopened_dir: Some(tempdir.path()),
+        };
+        match guard.engine.run(cfg) {
+            Ok(r) => ToolResult {
+                stdout: r.stdout,
+                stderr: r.stderr,
+                exit_code: r.exit_code,
+            },
+            Err(WasmError::ModuleNotFound(_)) => {
+                return ToolResult {
+                    stdout: Vec::new(),
+                    stderr: format!("command not found: {command}\n").into_bytes(),
+                    exit_code: 127,
+                };
+            }
+            Err(e) => {
+                return ToolResult {
+                    stdout: Vec::new(),
+                    stderr: format!("{command}: {e}\n").into_bytes(),
+                    exit_code: 1,
+                };
+            }
+        }
     };
-    match guard.engine.run(cfg) {
-        Ok(r) => ToolResult {
-            stdout: r.stdout,
-            stderr: r.stderr,
-            exit_code: r.exit_code,
-        },
-        Err(WasmError::ModuleNotFound(_)) => ToolResult {
-            stdout: Vec::new(),
-            stderr: format!("command not found: {command}\n").into_bytes(),
-            exit_code: 127,
-        },
-        Err(e) => ToolResult {
-            stdout: Vec::new(),
-            stderr: format!("{command}: {e}\n").into_bytes(),
-            exit_code: 1,
-        },
+    // Lock is dropped here before sync.
+
+    // 3. Sync filesystem mutations back to VFS.
+    if let Err(e) = sync_to_vfs(tempdir.path(), fs, &pre_run_files) {
+        let mut stderr = result.stderr.clone();
+        stderr.extend_from_slice(format!("\ndevdev: VFS sync warning: {e}").as_bytes());
+        return ToolResult { stderr, ..result };
     }
+
+    result
 }
 
 /// Translate a shim invocation into the target tool's argv. Returns
@@ -301,4 +341,132 @@ fn translate_shim(command: &str, _args: &[String]) -> (Vec<String>, Option<Strin
         Vec::new(),
         Some(format!("{command}: shim not implemented yet")),
     )
+}
+
+// ── VFS ↔ host filesystem bridge ────────────────────────────────────────
+
+/// Materialize VFS contents to a host directory for WASI preopens.
+fn materialize_vfs(vfs: &MemFs, host_root: &std::path::Path) -> std::io::Result<()> {
+    materialize_dir(vfs, "/", host_root)
+}
+
+fn materialize_dir(
+    vfs: &MemFs,
+    vfs_dir: &str,
+    host_dir: &std::path::Path,
+) -> std::io::Result<()> {
+    std::fs::create_dir_all(host_dir)?;
+    let entries = vfs
+        .list(Path::new(vfs_dir))
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
+    for entry in entries {
+        let vfs_path = if vfs_dir == "/" {
+            format!("/{}", entry.name)
+        } else {
+            format!("{vfs_dir}/{}", entry.name)
+        };
+        let host_path = host_dir.join(&entry.name);
+        match entry.file_type {
+            devdev_vfs::FileType::Directory => {
+                materialize_dir(vfs, &vfs_path, &host_path)?;
+            }
+            devdev_vfs::FileType::File => {
+                if let Ok(content) = vfs.read(Path::new(&vfs_path)) {
+                    std::fs::write(&host_path, content)?;
+                }
+            }
+            devdev_vfs::FileType::Symlink => {
+                // Best-effort: WASI preview1 can't create symlinks, but the
+                // target may still be readable as a regular file.
+                if let Ok(content) = vfs.read(Path::new(&vfs_path)) {
+                    std::fs::write(&host_path, content)?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Collect all file paths currently in the VFS (for diffing after WASM run).
+fn collect_vfs_files(vfs: &MemFs) -> HashSet<String> {
+    let mut paths = HashSet::new();
+    collect_dir_files(vfs, "/", &mut paths);
+    paths
+}
+
+fn collect_dir_files(vfs: &MemFs, dir: &str, paths: &mut HashSet<String>) {
+    if let Ok(entries) = vfs.list(Path::new(dir)) {
+        for entry in entries {
+            let full = if dir == "/" {
+                format!("/{}", entry.name)
+            } else {
+                format!("{dir}/{}", entry.name)
+            };
+            match entry.file_type {
+                devdev_vfs::FileType::File | devdev_vfs::FileType::Symlink => {
+                    paths.insert(full);
+                }
+                devdev_vfs::FileType::Directory => {
+                    collect_dir_files(vfs, &full, paths);
+                }
+            }
+        }
+    }
+}
+
+/// Sync filesystem mutations from a host directory back to the VFS.
+///
+/// Walks the host directory and writes any new or modified files to the VFS.
+/// Files that existed before the WASM run but are absent from the host dir
+/// are removed (the WASM tool deleted them).
+fn sync_to_vfs(
+    host_root: &std::path::Path,
+    vfs: &mut MemFs,
+    pre_run_files: &HashSet<String>,
+) -> std::io::Result<()> {
+    let mut post_run_files = HashSet::new();
+    sync_dir(host_root, host_root, vfs, &mut post_run_files)?;
+
+    // Remove files deleted by the WASM tool.
+    for path in pre_run_files {
+        if !post_run_files.contains(path) {
+            let _ = vfs.remove(Path::new(path));
+        }
+    }
+
+    Ok(())
+}
+
+fn sync_dir(
+    root: &std::path::Path,
+    dir: &std::path::Path,
+    vfs: &mut MemFs,
+    post_files: &mut HashSet<String>,
+) -> std::io::Result<()> {
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let host_path = entry.path();
+        let rel = host_path
+            .strip_prefix(root)
+            .expect("host_path is under root");
+        let vfs_path_str = format!("/{}", rel.to_string_lossy().replace('\\', "/"));
+        let vfs_path = PathBuf::from(&vfs_path_str);
+
+        if host_path.is_dir() {
+            let _ = vfs.mkdir_p(&vfs_path);
+            sync_dir(root, &host_path, vfs, post_files)?;
+        } else if host_path.is_file() {
+            post_files.insert(vfs_path_str);
+            let host_content = std::fs::read(&host_path)?;
+            // Only write if content differs (avoids unnecessary capacity churn).
+            let needs_write = match vfs.read(&vfs_path) {
+                Ok(vfs_content) => vfs_content != host_content,
+                Err(_) => true, // new file
+            };
+            if needs_write {
+                let _ = vfs.write(&vfs_path, &host_content);
+            }
+        }
+    }
+    Ok(())
 }

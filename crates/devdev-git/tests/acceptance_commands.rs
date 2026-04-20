@@ -188,13 +188,10 @@ fn diff_stat_summary() {
 
 // ---------- P0: status ----------
 
-/// AC: `git status` reports the current branch and the work-tree delta.
+/// AC: `git status` reports the current branch and a clean work tree.
 ///
-/// Note: `VirtualRepo::from_vfs` extracts only `.git/` to a temp dir, so
-/// the working tree appears empty and every indexed file shows as
-/// deleted. That's the correct libgit2 reading of the reconstructed
-/// checkout — a richer mode that synchronises the VFS working tree into
-/// the temp dir is tracked as P1 follow-up.
+/// `VirtualRepo::from_vfs` materialises both `.git/` and the working-tree
+/// files from the VFS, so `git status` sees an up-to-date checkout.
 #[test]
 fn status_reports_branch_and_worktree() {
     let fx = make_two_commit_repo();
@@ -203,11 +200,31 @@ fn status_reports_branch_and_worktree() {
     assert_eq!(out.exit_code, 0, "stderr: {}", stderr(&out));
     let s = stdout(&out);
     assert!(s.starts_with("On branch "), "{s}");
-    // Either a clean tree OR files-deleted relative to index; both are
-    // acceptable outputs of the read-only `git status`.
     assert!(
-        s.contains("nothing to commit") || s.contains("deleted:"),
-        "unexpected status output: {s}"
+        s.contains("nothing to commit"),
+        "expected clean working tree, got: {s}"
+    );
+}
+
+/// AC: `git status` detects a VFS working-tree modification.
+///
+/// When a VFS file is modified after the index was built, `git status`
+/// should report it as modified — proving the working-tree bridge works.
+#[test]
+fn status_detects_vfs_modification() {
+    let fx = make_two_commit_repo();
+    let (mut vfs, _old_repo) = load(&fx);
+    // Modify a tracked file in the VFS.
+    vfs.write(std::path::Path::new("/a.txt"), b"modified content\n")
+        .unwrap();
+    // Reload the repo so it sees the modified working tree.
+    let repo = VirtualRepo::from_vfs(&vfs, "/").unwrap();
+    let out = run(&repo, &["status"]);
+    assert_eq!(out.exit_code, 0, "stderr: {}", stderr(&out));
+    let s = stdout(&out);
+    assert!(
+        s.contains("modified:") && s.contains("a.txt"),
+        "expected modified a.txt in status, got: {s}"
     );
 }
 

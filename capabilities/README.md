@@ -53,6 +53,31 @@ PHASE 5 ─ Validation
       └───────────── 14-test-harness
 ```
 
+## Phase 2 — Persistent Sandbox
+
+```
+LEAVES (no dependencies, can parallel)
+  15-vfs-serialization ──────────┐
+  16-multi-repo-vfs              │
+  20-github-adapter              │
+  23-engine-cleanup              │
+                                 │
+DAEMON                           │
+  17-daemon-lifecycle ◄──────────┘  (needs 15 for checkpoint)
+        │
+        ├───────────────────────────────────┐
+        │                                   │
+  18-chat-tui-headless              19-task-manager
+                                        │
+                                  21-session-router
+                                        │
+                              22-monitor-pr-task ◄── 20-github-adapter
+                                        │
+                              24-e2e-pr-shepherding
+```
+
+Build order: 15 + 16 + 20 + 23 (parallel) → 17 → 18 + 19 (parallel) → 21 → 22 → 24
+
 ## Parallel Work Streams
 
 Within each phase, capabilities without mutual dependencies can be built concurrently:
@@ -69,10 +94,15 @@ Within each phase, capabilities without mutual dependencies can be built concurr
 
 | Crate | Capabilities |
 |-------|-------------|
-| `devdev-vfs` | 00, 01 |
-| `devdev-wasm` | 03, 04 |
-| `devdev-git` | 05, 06 |
+| `devdev-vfs` | 00, 01, 15, 16 |
+| `devdev-wasm` | 03, 04, 23 |
+| `devdev-git` | 05, 06, 23 |
 | `devdev-shell` | 07, 08, 09 |
 | `devdev-acp` | 10, 11, 12 |
 | `devdev-cli` | 13, 14 |
+| `devdev-daemon` *(new)* | 17, 21 |
+| `devdev-tui` *(new)* | 18 |
+| `devdev-tasks` *(new)* | 19, 22 |
+| `devdev-integrations` *(new)* | 20 |
+| `tests/` | 24 |
 | *(build infra)* | 02 |

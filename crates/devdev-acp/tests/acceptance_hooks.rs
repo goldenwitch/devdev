@@ -32,7 +32,7 @@ impl ToolEngine for FakeTools {
         stdin: &[u8],
         _env: &HashMap<String, String>,
         _cwd: &str,
-        fs: &MemFs,
+        fs: &mut MemFs,
     ) -> ToolResult {
         match command {
             "echo" => ToolResult {
