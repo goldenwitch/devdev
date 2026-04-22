@@ -8,7 +8,9 @@
 //! library. Tests drive `evaluate` directly via a scripted fake agent
 //! over `tokio::io::duplex`.
 
+pub mod acp_backend;
 pub mod config;
+pub mod daemon_cli;
 pub mod eval;
 pub mod output;
 pub mod prompt;

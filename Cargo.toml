@@ -11,6 +11,7 @@ members = [
     "crates/devdev-daemon",
     "crates/devdev-tasks",
     "crates/devdev-tui",
+    "crates/devdev-scenarios",
 ]
 
 [workspace.package]

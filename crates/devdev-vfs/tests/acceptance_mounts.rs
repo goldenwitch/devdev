@@ -50,7 +50,7 @@ fn mount_two_repos_isolated() {
     let fix_a = make_fixture("alpha");
     let fix_b = make_fixture("beta");
     let mut vfs = MemFs::new();
-    let opts = LoadOptions {
+    let _opts = LoadOptions {
         include_git: false,
         ..Default::default()
     };

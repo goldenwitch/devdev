@@ -19,6 +19,9 @@ use std::time::Duration;
 
 use clap::{Parser, Subcommand};
 
+use devdev_cli::daemon_cli::{
+    run_down, run_send, run_status, run_up, DownArgs, SendArgs, StatusArgs, UpArgs,
+};
 use devdev_cli::{
     DEFAULT_CLI_HANG_TIMEOUT, DEFAULT_COMMAND_TIMEOUT, DEFAULT_SESSION_TIMEOUT,
     DEFAULT_WORKSPACE_LIMIT, EvalConfig, EvalContext, EvalError, PreferenceFile, Transport,
@@ -36,6 +39,14 @@ struct Cli {
 enum Command {
     /// Run one evaluation against a local repo.
     Eval(EvalArgs),
+    /// Start the DevDev daemon (foreground).
+    Up(UpArgs),
+    /// Ask a running daemon to shut down.
+    Down(DownArgs),
+    /// Send a one-shot prompt to the running daemon.
+    Send(SendArgs),
+    /// Print daemon status.
+    Status(StatusArgs),
 }
 
 #[derive(Parser, Debug)]
@@ -102,6 +113,32 @@ fn main() -> ExitCode {
             Ok(()) => ExitCode::SUCCESS,
             Err(exit) => exit,
         },
+        Command::Up(args) => run_async(run_up(args)),
+        Command::Down(args) => run_async(run_down(args)),
+        Command::Send(args) => run_async(run_send(args)),
+        Command::Status(args) => run_async(run_status(args)),
+    }
+}
+
+/// Drive an async command to completion on a fresh tokio runtime,
+/// mapping `anyhow::Error` to exit code 1 with a stderr diagnostic.
+fn run_async<F>(fut: F) -> ExitCode
+where
+    F: std::future::Future<Output = anyhow::Result<()>>,
+{
+    let rt = match tokio::runtime::Runtime::new() {
+        Ok(rt) => rt,
+        Err(e) => {
+            eprintln!("devdev: could not build tokio runtime: {e}");
+            return ExitCode::from(1);
+        }
+    };
+    match rt.block_on(fut) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("devdev: {e}");
+            ExitCode::from(1)
+        }
     }
 }
 

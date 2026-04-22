@@ -20,6 +20,10 @@ devdev-wasm = { path = "../devdev-wasm" }
 devdev-git = { path = "../devdev-git" }
 devdev-shell = { path = "../devdev-shell" }
 devdev-acp = { path = "../devdev-acp" }
+devdev-daemon = { path = "../devdev-daemon" }
+devdev-tasks = { path = "../devdev-tasks" }
+devdev-integrations = { path = "../devdev-integrations" }
+async-trait = { workspace = true }
 clap = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -157,6 +157,7 @@ fn calculate_total_size(root: &Path, options: &LoadOptions) -> Result<u64, LoadE
 }
 
 /// Recursively load a host directory into the VFS.
+#[allow(clippy::too_many_arguments)] // internal helper; all args are required state-threading.
 fn load_dir_recursive(
     root: &Path,
     current: &Path,
