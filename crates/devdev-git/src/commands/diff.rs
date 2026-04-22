@@ -20,6 +20,7 @@ struct Options {
     name_only: bool,
     stat: bool,
     revs: Vec<String>,
+    paths: Vec<String>,
 }
 
 fn parse(args: &[String]) -> Result<Options, String> {
@@ -28,9 +29,18 @@ fn parse(args: &[String]) -> Result<Options, String> {
         name_only: false,
         stat: false,
         revs: Vec::new(),
+        paths: Vec::new(),
     };
+    let mut after_dashdash = false;
     for a in args {
+        if after_dashdash {
+            opts.paths.push(a.clone());
+            continue;
+        }
         match a.as_str() {
+            "--" => {
+                after_dashdash = true;
+            }
             "--cached" | "--staged" => opts.cached = true,
             "--name-only" => opts.name_only = true,
             "--stat" => opts.stat = true,
@@ -64,6 +74,9 @@ pub fn run(repo: &Repository, args: &[String]) -> GitResult {
     };
 
     let mut diff_opts = DiffOptions::new();
+    for path in &opts.paths {
+        diff_opts.pathspec(path);
+    }
     let diff = match repo.diff_tree_to_tree(
         old_tree.as_ref(),
         new_tree.as_ref(),

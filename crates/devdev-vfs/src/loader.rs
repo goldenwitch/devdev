@@ -86,10 +86,24 @@ impl From<VfsError> for LoadError {
 /// Load a host filesystem directory into the VFS.
 ///
 /// Two-pass: first calculates total size, then loads if within capacity.
+/// Files are placed under `prefix` (use `/` for the traditional root mount).
 /// Returns the total bytes loaded.
 pub fn load_repo(
     host_path: &Path,
     vfs: &mut MemFs,
+    options: &LoadOptions,
+) -> Result<u64, LoadError> {
+    load_repo_at(host_path, vfs, Path::new("/"), options)
+}
+
+/// Load a host filesystem directory into the VFS under a given `prefix`.
+///
+/// Two-pass: first calculates total size, then loads if within capacity.
+/// Returns the total bytes loaded.
+pub fn load_repo_at(
+    host_path: &Path,
+    vfs: &mut MemFs,
+    prefix: &Path,
     options: &LoadOptions,
 ) -> Result<u64, LoadError> {
     // Validate host path
@@ -114,10 +128,12 @@ pub fn load_repo(
     // Pass 2: load files
     let mut files_loaded: u64 = 0;
     let mut bytes_loaded: u64 = 0;
+    let prefix_str = prefix.to_string_lossy().to_string();
     load_dir_recursive(
         host_path,
         host_path,
         vfs,
+        &prefix_str,
         options,
         &mut files_loaded,
         &mut bytes_loaded,
@@ -145,6 +161,7 @@ fn load_dir_recursive(
     root: &Path,
     current: &Path,
     vfs: &mut MemFs,
+    prefix: &str,
     options: &LoadOptions,
     files_loaded: &mut u64,
     bytes_loaded: &mut u64,
@@ -168,9 +185,14 @@ fn load_dir_recursive(
             continue;
         }
 
-        // Compute VFS path: strip the root prefix and prepend `/`
+        // Compute VFS path: strip the root prefix and prepend the target prefix
         let relative = host_path.strip_prefix(root).unwrap_or(&host_path);
-        let vfs_path_str = format!("/{}", relative.to_string_lossy().replace('\\', "/"));
+        let rel_str = relative.to_string_lossy().replace('\\', "/");
+        let vfs_path_str = if prefix == "/" {
+            format!("/{rel_str}")
+        } else {
+            format!("{prefix}/{rel_str}")
+        };
         let vfs_path = Path::new(&vfs_path_str);
 
         if file_type.is_symlink() {
@@ -183,6 +205,7 @@ fn load_dir_recursive(
                 root,
                 &host_path,
                 vfs,
+                prefix,
                 options,
                 files_loaded,
                 bytes_loaded,

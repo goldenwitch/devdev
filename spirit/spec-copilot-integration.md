@@ -42,14 +42,13 @@ ACP exposes the following RPC methods relevant to DevDev:
 - `session.list()` — list active sessions
 
 **Tool Execution (the core):**
-- `session.shell.exec(command)` — the agent requests a shell command. This is our interception point.
-- `session.shell.kill(pid)` — the agent wants to kill a running command.
 - `tools.list()` — discover available tools.
 
-**Hooks (the interception mechanism):**
-- `preToolUse` — fires **before** the CLI executes any tool. DevDev intercepts here, reroutes the command to the virtual engine, and returns the result. The CLI never touches the host OS.
-- `postToolUse` — fires after tool execution. Useful for logging/auditing.
-- `PermissionRequest` — fires when the agent wants to do something that requires approval. DevDev can auto-approve virtual operations.
+**Client Capabilities (the interception mechanism):**
+DevDev advertises `{ terminal: true, fs: { readTextFile: true, writeTextFile: true } }` during `initialize`. The agent sends `terminal/create` and `fs/*` requests which DevDev routes through the virtual engine. This is cleaner than `preToolUse` hook interception — DevDev becomes the execution backend transparently.
+
+- `terminal/create`, `terminal/kill` — the agent requests terminal operations. DevDev routes them to the Shell Parser → WASM/Virtual Git → VFS.
+- `fs/readTextFile`, `fs/writeTextFile` — file operations routed through VFS.
 
 **Output:**
 - `--output-format json` produces JSONL (JSON Lines) output — structured, parseable, no escape sequences.
@@ -59,8 +58,8 @@ ACP exposes the following RPC methods relevant to DevDev:
 
 When the agent issues a tool-use command (e.g., `grep -r TODO src/`):
 
-1. ACP fires the `preToolUse` hook with the command details (structured JSON).
-2. DevDev receives the hook, extracts the command string.
+1. The agent sends a `terminal/create` request via ACP with the command details.
+2. DevDev receives the request and extracts the command string.
 3. DevDev routes the command to the **Shell Parser** → **WASM Tool Engine / Virtual Git** → **VFS**.
 4. DevDev captures stdout, stderr, and exit code from virtual execution.
 5. DevDev returns the result to the Copilot CLI through the ACP response.
@@ -73,8 +72,7 @@ The agent never executes anything on the host. DevDev is the sole execution back
 ACP provides fine-grained tool permission controls:
 - `--available-tools X,Y,Z` — whitelist specific tools.
 - `--excluded-tools A,B` — blacklist specific tools.
-- `preToolUse` hook can programmatically deny, modify, or approve any tool call.
-- `PermissionRequest` hook provides programmatic approval for sensitive actions.
+- Client capabilities allow DevDev to control which operations are available at the protocol level.
 
 DevDev should auto-approve all virtual tool operations (they're sandboxed — there's nothing to protect against) and **deny** any operations that would escape the sandbox (network calls, host filesystem access).
 
@@ -90,10 +88,10 @@ DevDev should auto-approve all virtual tool operations (they're sandboxed — th
 │  │        ACP Client                    │    │
 │  │  (stdio RPC to Copilot CLI)          │    │
 │  │                                      │    │
-│  │  Hooks:                              │    │
-│  │   preToolUse ──► Tool Interceptor    │    │
-│  │   PermissionRequest ──► Auto-approve │    │
-│  │   postToolUse ──► Audit Log          │    │
+│  │  Client Capabilities:                │    │
+│  │   terminal/* ──► Tool Interceptor    │    │
+│  │   fs/*       ──► VFS Operations      │    │
+│  │                                      │    │
 │  └────────────────────┬─────────────────┘    │
 │                       │                      │
 │            ┌──────────▼───────────┐          │

@@ -28,15 +28,28 @@ struct Options {
     limit: Option<usize>,
     author: Option<String>,
     format: Option<String>,
+    since: Option<String>,
+    follow: bool,
+    paths: Vec<String>,
 }
 
 fn parse(args: &[String]) -> Result<Options, String> {
     let mut opts = Options::default();
     let mut i = 0;
+    let mut after_dashdash = false;
     while i < args.len() {
         let a = &args[i];
+        if after_dashdash {
+            opts.paths.push(a.clone());
+            i += 1;
+            continue;
+        }
         match a.as_str() {
+            "--" => {
+                after_dashdash = true;
+            }
             "--oneline" => opts.oneline = true,
+            "--follow" => opts.follow = true,
             "-n" => {
                 i += 1;
                 let v = args.get(i).ok_or("git log: -n requires an argument")?;
@@ -49,8 +62,15 @@ fn parse(args: &[String]) -> Result<Options, String> {
                 opts.format = Some(s["--format=".len()..].to_owned());
             }
             s if s.starts_with("--pretty=") => {
-                // `--pretty=` accepts the same value set as `--format=` for our purposes.
                 opts.format = Some(s["--pretty=".len()..].to_owned());
+            }
+            s if s.starts_with("--since=") || s.starts_with("--after=") => {
+                let val = if s.starts_with("--since=") {
+                    &s["--since=".len()..]
+                } else {
+                    &s["--after=".len()..]
+                };
+                opts.since = Some(val.to_owned());
             }
             // -<N> shorthand, e.g. -5
             s if s.starts_with('-')
@@ -67,7 +87,8 @@ fn parse(args: &[String]) -> Result<Options, String> {
                 return Err(format!("git log: unsupported flag '{s}'"));
             }
             _ => {
-                return Err(format!("git log: unexpected argument '{a}'"));
+                // Bare argument after flags — treat as path
+                opts.paths.push(a.clone());
             }
         }
         i += 1;
@@ -80,6 +101,9 @@ pub fn run(repo: &Repository, args: &[String]) -> GitResult {
         Ok(o) => o,
         Err(e) => return GitResult::err(e, 128),
     };
+
+    // Parse --since cutoff into a git timestamp (seconds since epoch).
+    let since_cutoff: Option<i64> = opts.since.as_ref().and_then(|s| parse_since(s));
 
     let mut walker = match repo.revwalk() {
         Ok(w) => w,
@@ -108,11 +132,26 @@ pub fn run(repo: &Repository, args: &[String]) -> GitResult {
             Ok(c) => c,
             Err(e) => return GitResult::err(format!("git log: {e}"), 128),
         };
+
+        // --since / --after: skip commits older than cutoff.
+        if let Some(cutoff) = since_cutoff {
+            if commit.time().seconds() < cutoff {
+                // Commits are sorted by time; all subsequent are older.
+                break;
+            }
+        }
+
+        // --author filter
         if let Some(pat) = &opts.author {
             let name = commit.author().name().unwrap_or("").to_owned();
             if !name.contains(pat) {
                 continue;
             }
+        }
+
+        // -- <path> filter: skip commits that don't touch any listed path.
+        if !opts.paths.is_empty() && !commit_touches_paths(repo, &commit, &opts.paths) {
+            continue;
         }
 
         if let Some(fmt) = &opts.format {
@@ -126,6 +165,70 @@ pub fn run(repo: &Repository, args: &[String]) -> GitResult {
     }
 
     GitResult::ok(out)
+}
+
+/// Parse a --since value into seconds since epoch.
+/// Supports: ISO 8601 dates (YYYY-MM-DD), Unix timestamps.
+fn parse_since(s: &str) -> Option<i64> {
+    // Try Unix timestamp first.
+    if let Ok(ts) = s.parse::<i64>() {
+        return Some(ts);
+    }
+    // Try YYYY-MM-DD.
+    let parts: Vec<&str> = s.split('-').collect();
+    if parts.len() == 3 {
+        let y: i64 = parts[0].parse().ok()?;
+        let m: i64 = parts[1].parse().ok()?;
+        let d: i64 = parts[2].parse().ok()?;
+        // Approximate: convert to days since epoch, then to seconds.
+        // Uses the same civil_from_days logic in reverse.
+        let epoch_days = days_from_civil(y as i32, m as u32, d as u32);
+        return Some(epoch_days * 86_400);
+    }
+    None
+}
+
+/// Inverse of civil_from_days: given (y, m, d) return days since 1970-01-01.
+fn days_from_civil(y: i32, m: u32, d: u32) -> i64 {
+    let y = y as i64;
+    let m = m as i64;
+    let d = d as i64;
+    let y = y - if m <= 2 { 1 } else { 0 };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = y - era * 400;
+    let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
+}
+
+/// Check whether a commit touches any of the given paths.
+fn commit_touches_paths(repo: &Repository, commit: &Commit<'_>, paths: &[String]) -> bool {
+    let tree = match commit.tree() {
+        Ok(t) => t,
+        Err(_) => return false,
+    };
+
+    // Get parent tree (or empty tree for the root commit).
+    let parent_tree = commit
+        .parent(0)
+        .ok()
+        .and_then(|p| p.tree().ok());
+
+    let mut diff_opts = git2::DiffOptions::new();
+    for path in paths {
+        diff_opts.pathspec(path);
+    }
+
+    let diff = match repo.diff_tree_to_tree(
+        parent_tree.as_ref(),
+        Some(&tree),
+        Some(&mut diff_opts),
+    ) {
+        Ok(d) => d,
+        Err(_) => return false,
+    };
+
+    diff.deltas().count() > 0
 }
 
 fn render_oneline(commit: &Commit<'_>, out: &mut Vec<u8>) {

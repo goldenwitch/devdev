@@ -13,7 +13,7 @@ pub mod memfs;
 pub mod path;
 pub mod types;
 
-pub use loader::{LoadError, LoadOptions, LoadProgress, MAX_DEPTH, load_repo};
+pub use loader::{LoadError, LoadOptions, LoadProgress, MAX_DEPTH, load_repo, load_repo_at};
 pub use memfs::MemFs;
 pub use types::{DirEntry, FileStat, FileType, MemoryUsage};
 
@@ -53,6 +53,9 @@ pub enum VfsError {
 
     #[error("invalid glob pattern: {0}")]
     InvalidGlob(String),
+
+    #[error("invalid checkpoint: {0}")]
+    InvalidCheckpoint(String),
 }
 
 pub type VfsResult<T> = Result<T, VfsError>;

@@ -1,6 +1,8 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use serde::{Deserialize, Serialize};
 
 use crate::glob;
 use crate::path as vpath;
@@ -18,6 +20,7 @@ pub struct MemFs {
     cwd: PathBuf,
     bytes_used: u64,
     bytes_limit: u64,
+    mounts: BTreeSet<PathBuf>,
 }
 
 impl MemFs {
@@ -41,6 +44,7 @@ impl MemFs {
             cwd: PathBuf::from("/"),
             bytes_used: 0,
             bytes_limit,
+            mounts: BTreeSet::new(),
         }
     }
 
@@ -498,6 +502,85 @@ impl MemFs {
 
     // ── Memory management ───────────────────────────────────────
 
+    // ── Mount management ────────────────────────────────────────
+
+    /// Mount a host repo into the VFS at `mount_point` using `load_fn`.
+    ///
+    /// The `load_fn` receives the VFS and the mount-point prefix so it can
+    /// load files into the correct subtree.  This keeps the loader decoupled
+    /// from `MemFs` itself.
+    ///
+    /// Fails with `AlreadyExists` if `mount_point` already contains files.
+    pub fn mount(
+        &mut self,
+        mount_point: &Path,
+        load_fn: impl FnOnce(&mut MemFs, &Path) -> Result<(), crate::VfsError>,
+    ) -> VfsResult<()> {
+        let abs = self.abs(mount_point);
+
+        // Fail if non-empty subtree already exists under mount_point.
+        if self.tree.contains_key(&abs) {
+            let prefix = format!("{}/", abs.to_string_lossy());
+            let has_children = self.tree.keys().any(|k| k.to_string_lossy().starts_with(&prefix));
+            if has_children {
+                return Err(VfsError::AlreadyExists(abs));
+            }
+            // If the dir exists but is empty, that's fine — e.g. parent
+            // dirs created by a previous mount.
+        }
+
+        // Create mount point directory.
+        self.mkdir_p(&abs)?;
+
+        // Run the loader.
+        load_fn(self, &abs)?;
+
+        self.mounts.insert(abs);
+        Ok(())
+    }
+
+    /// Remove all nodes under `mount_point`, reclaiming memory.
+    /// Resets cwd to `/` if it was inside the removed subtree.
+    /// No-op if `mount_point` was never mounted.
+    pub fn unmount(&mut self, mount_point: &Path) -> VfsResult<()> {
+        let abs = self.abs(mount_point);
+
+        if !self.mounts.remove(&abs) {
+            return Ok(()); // no-op
+        }
+
+        let prefix = format!("{}/", abs.to_string_lossy());
+        let to_remove: Vec<PathBuf> = self
+            .tree
+            .keys()
+            .filter(|k| *k == &abs || k.to_string_lossy().starts_with(&prefix))
+            .cloned()
+            .collect();
+
+        for p in &to_remove {
+            if let Some(Node::File { content, .. }) = self.tree.get(p) {
+                self.bytes_used -= content.len() as u64;
+            }
+            self.tree.remove(p);
+        }
+
+        // Reset cwd if it was inside the unmounted subtree.
+        let cwd_str = self.cwd.to_string_lossy().to_string();
+        let abs_str = abs.to_string_lossy().to_string();
+        if cwd_str == abs_str || cwd_str.starts_with(&prefix) {
+            self.cwd = PathBuf::from("/");
+        }
+
+        Ok(())
+    }
+
+    /// Return all active mount points in sorted order.
+    pub fn mounts(&self) -> Vec<PathBuf> {
+        self.mounts.iter().cloned().collect()
+    }
+
+    // ── Memory management (cont.) ───────────────────────────────
+
     pub fn usage(&self) -> MemoryUsage {
         MemoryUsage {
             bytes_used: self.bytes_used,
@@ -530,5 +613,169 @@ impl MemFs {
 impl Default for MemFs {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+// ── Checkpoint serialization ────────────────────────────────────
+
+const CHECKPOINT_MAGIC: &[u8; 6] = b"DDVFS\x00";
+const CHECKPOINT_VERSION: u8 = 1;
+
+/// Internal snapshot format — not public API.
+#[derive(Serialize, Deserialize)]
+struct VfsSnapshot {
+    version: u8,
+    cwd: String,
+    bytes_limit: u64,
+    mounts: Vec<String>,
+    nodes: Vec<(String, SerializedNode)>,
+}
+
+#[derive(Serialize, Deserialize)]
+enum SerializedNode {
+    File {
+        content: Vec<u8>,
+        mode: u32,
+        modified_secs: u64,
+    },
+    Directory {
+        mode: u32,
+        modified_secs: u64,
+    },
+    Symlink {
+        target: String,
+        modified_secs: u64,
+    },
+}
+
+fn system_time_to_secs(t: SystemTime) -> u64 {
+    t.duration_since(UNIX_EPOCH).unwrap_or(Duration::ZERO).as_secs()
+}
+
+fn secs_to_system_time(secs: u64) -> SystemTime {
+    UNIX_EPOCH + Duration::from_secs(secs)
+}
+
+impl MemFs {
+    /// Serialize the entire VFS tree to a binary blob.
+    ///
+    /// Format: 6-byte magic + 1-byte version + bincode-encoded `VfsSnapshot`.
+    pub fn serialize(&self) -> Vec<u8> {
+        let nodes: Vec<(String, SerializedNode)> = self
+            .tree
+            .iter()
+            .map(|(path, node)| {
+                let path_str = path.to_string_lossy().to_string();
+                let snode = match node {
+                    Node::File {
+                        content,
+                        mode,
+                        modified,
+                    } => SerializedNode::File {
+                        content: content.clone(),
+                        mode: *mode,
+                        modified_secs: system_time_to_secs(*modified),
+                    },
+                    Node::Directory { mode, modified } => SerializedNode::Directory {
+                        mode: *mode,
+                        modified_secs: system_time_to_secs(*modified),
+                    },
+                    Node::Symlink { target, modified } => SerializedNode::Symlink {
+                        target: target.to_string_lossy().to_string(),
+                        modified_secs: system_time_to_secs(*modified),
+                    },
+                };
+                (path_str, snode)
+            })
+            .collect();
+
+        let snapshot = VfsSnapshot {
+            version: CHECKPOINT_VERSION,
+            cwd: self.cwd.to_string_lossy().to_string(),
+            bytes_limit: self.bytes_limit,
+            mounts: self.mounts.iter().map(|p| p.to_string_lossy().to_string()).collect(),
+            nodes,
+        };
+
+        let body = bincode::serialize(&snapshot).expect("VfsSnapshot serialization cannot fail");
+
+        let mut out = Vec::with_capacity(CHECKPOINT_MAGIC.len() + 1 + body.len());
+        out.extend_from_slice(CHECKPOINT_MAGIC);
+        out.push(CHECKPOINT_VERSION);
+        out.extend_from_slice(&body);
+        out
+    }
+
+    /// Deserialize a VFS tree from a binary blob previously produced by
+    /// [`serialize`](Self::serialize).
+    ///
+    /// Returns `VfsError::InvalidCheckpoint` on magic/version mismatch or
+    /// corrupt data.
+    pub fn deserialize(data: &[u8]) -> VfsResult<MemFs> {
+        let header_len = CHECKPOINT_MAGIC.len() + 1;
+        if data.len() < header_len {
+            return Err(VfsError::InvalidCheckpoint(
+                "data too short for header".into(),
+            ));
+        }
+
+        if &data[..CHECKPOINT_MAGIC.len()] != CHECKPOINT_MAGIC {
+            return Err(VfsError::InvalidCheckpoint("bad magic bytes".into()));
+        }
+
+        let version = data[CHECKPOINT_MAGIC.len()];
+        if version != CHECKPOINT_VERSION {
+            return Err(VfsError::InvalidCheckpoint(format!(
+                "unsupported version {version}, expected {CHECKPOINT_VERSION}"
+            )));
+        }
+
+        let body = &data[header_len..];
+        let snapshot: VfsSnapshot = bincode::deserialize(body)
+            .map_err(|e| VfsError::InvalidCheckpoint(format!("corrupt data: {e}")))?;
+
+        let mut tree = BTreeMap::new();
+        let mut bytes_used: u64 = 0;
+
+        for (path_str, snode) in snapshot.nodes {
+            let path = PathBuf::from(&path_str);
+            let node = match snode {
+                SerializedNode::File {
+                    content,
+                    mode,
+                    modified_secs,
+                } => {
+                    bytes_used += content.len() as u64;
+                    Node::File {
+                        content,
+                        mode,
+                        modified: secs_to_system_time(modified_secs),
+                    }
+                }
+                SerializedNode::Directory {
+                    mode,
+                    modified_secs,
+                } => Node::Directory {
+                    mode,
+                    modified: secs_to_system_time(modified_secs),
+                },
+                SerializedNode::Symlink {
+                    target,
+                    modified_secs,
+                } => Node::Symlink {
+                    target: PathBuf::from(target),
+                    modified: secs_to_system_time(modified_secs),
+                },
+            };
+            tree.insert(path, node);
+        }
+
+        Ok(MemFs {
+            tree,
+            cwd: PathBuf::from(&snapshot.cwd),
+            bytes_used,
+            bytes_limit: snapshot.bytes_limit,
+            mounts: snapshot.mounts.iter().map(PathBuf::from).collect(),
+        })
     }
 }

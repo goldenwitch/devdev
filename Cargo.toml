@@ -7,6 +7,10 @@ members = [
     "crates/devdev-shell",
     "crates/devdev-acp",
     "crates/devdev-cli",
+    "crates/devdev-integrations",
+    "crates/devdev-daemon",
+    "crates/devdev-tasks",
+    "crates/devdev-tui",
 ]
 
 [workspace.package]
@@ -18,6 +22,7 @@ license = "MIT"
 # Serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+bincode = "1"
 
 # Error handling
 thiserror = "2"
@@ -50,6 +55,9 @@ similar = "2"
 
 # CLI
 clap = { version = "4", features = ["derive"] }
+
+# HTTP
+reqwest = { version = "0.12", features = ["json"] }
 
 # Testing
 tempfile = "3"
