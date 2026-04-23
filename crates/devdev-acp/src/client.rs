@@ -1,6 +1,6 @@
 //! [`AcpClient`] — async ACP transport orchestrator.
 //!
-//! Manages one ACP peer (typically a spawned `copilot --acp --stdio`
+//! Manages one ACP peer (typically a spawned `copilot --acp`
 //! subprocess) and the bidirectional NDJSON stream. Owns a reader task
 //! that demultiplexes incoming messages into:
 //!
@@ -149,7 +149,10 @@ pub struct AcpClient {
 }
 
 impl AcpClient {
-    /// Spawn `copilot --acp --stdio` and wire up the client.
+    /// Spawn an ACP agent (e.g. `copilot --acp --allow-all-tools`)
+    /// and wire up the client. The caller supplies `program` + `args`;
+    /// stdio is the only transport the Copilot CLI supports in ACP
+    /// mode, so no transport flag is needed.
     pub async fn connect_process(
         program: &str,
         args: &[&str],

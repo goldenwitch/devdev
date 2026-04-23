@@ -1,7 +1,7 @@
 ---
 id: test-harness
 title: "End-to-End Test Harness & CLI"
-status: not-started
+status: done
 type: composition
 phase: 5
 crate: devdev-cli
@@ -46,8 +46,11 @@ additionally require:
 - Node.js ≥ 20 on `PATH`.
 - `@github/copilot` ≥ 1.0.26 installed globally or under `npx`
   (tests shell out to whichever `copilot` resolves first).
-- A **fine-grained** GitHub PAT in `GH_TOKEN` or `GITHUB_TOKEN`.
-  Classic PATs are rejected by the CLI.
+- A GitHub credential for Copilot. Any of the following works:
+  - `GH_TOKEN` / `GITHUB_TOKEN` env var containing a **fine-grained** PAT with Copilot scope, or
+  - a `gh auth login` OAuth token (set `GH_TOKEN=$(gh auth token)` before running E2E),
+  - or a pre-existing `gh auth login` session on the machine — the Copilot CLI reuses gh-CLI credentials transparently. (Validated 2026-04-22 via the P2-06 PoC using a `gho_*` OAuth token from `gh auth token`.)
+  - Classic PATs are rejected by the CLI.
 - `DEVDEV_E2E=1` in the environment to opt in.
 
 `tools/` already contains `build-tools.{ps1,sh}` for the WASM

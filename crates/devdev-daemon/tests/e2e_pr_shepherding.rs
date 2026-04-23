@@ -3,7 +3,6 @@
 //! Proves the full Phase 2 stack works: daemon ↔ IPC ↔ dispatch ↔ tasks ↔ mock agent ↔ mock GitHub.
 
 use std::sync::Arc;
-use std::path::Path;
 use std::time::Duration;
 
 use devdev_daemon::dispatch::DispatchContext;
@@ -229,9 +228,9 @@ impl E2EHarness {
     async fn stop(self) -> Vec<u8> {
         let _ = self.shutdown_tx.send(true);
         tokio::time::sleep(Duration::from_millis(50)).await;
-        // Return checkpoint data (VFS serialized).
-        let vfs = self._daemon.vfs.lock().await;
-        vfs.serialize()
+        // Return checkpoint data (fs serialized).
+        let fs = self._daemon.fs.lock().await;
+        fs.serialize()
     }
 }
 
@@ -316,7 +315,7 @@ async fn e2e_checkpoint_recovery() {
     let tmp = tempfile::tempdir().unwrap();
     let data_dir = tmp.path().to_path_buf();
 
-    // Phase 1: start, write to VFS, checkpoint, stop.
+    // Phase 1: start, write to fs, checkpoint, stop.
     {
         let config = DaemonConfig {
             data_dir: data_dir.clone(),
@@ -326,15 +325,15 @@ async fn e2e_checkpoint_recovery() {
         let daemon = Daemon::start(config, false).await.unwrap();
 
         {
-            let mut vfs = daemon.vfs.lock().await;
-            vfs.write(Path::new("/marker.txt"), b"phase1").unwrap();
+            let mut fs = daemon.fs.lock().await;
+            fs.write_path(b"/marker.txt", b"phase1").unwrap();
         }
 
         daemon.save_checkpoint().await.unwrap();
         daemon.stop().await.unwrap();
     }
 
-    // Phase 2: restart from checkpoint, verify VFS intact.
+    // Phase 2: restart from checkpoint, verify fs intact.
     {
         let config = DaemonConfig {
             data_dir: data_dir.clone(),
@@ -343,8 +342,8 @@ async fn e2e_checkpoint_recovery() {
         };
         let daemon = Daemon::start(config, true).await.unwrap();
 
-        let vfs = daemon.vfs.lock().await;
-        let data = vfs.read(Path::new("/marker.txt")).unwrap();
+        let fs = daemon.fs.lock().await;
+        let data = fs.read_path(b"/marker.txt").unwrap();
         assert_eq!(data, b"phase1");
 
         daemon.stop().await.unwrap();

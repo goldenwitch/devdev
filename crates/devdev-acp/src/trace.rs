@@ -1,4 +1,4 @@
-//! Observability hook for the [`crate::hooks::SandboxHandler`].
+//! Observability hook for ACP handlers.
 //!
 //! The handler emits one event per inbound ACP call plus one per
 //! `session/update` notification. A [`TraceLogger`] implementation is

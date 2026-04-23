@@ -1,7 +1,7 @@
 ---
 id: github-adapter
 title: "GitHub Integration Adapter"
-status: not-started
+status: done
 type: leaf
 phase: 2
 crate: devdev-integrations

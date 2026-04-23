@@ -168,3 +168,19 @@ Despite the lifecycle error, the core crates are sound. MemFs, ShellSession, Was
 *Values: Empiricism. Brevity. Wit.*
 
 *The empiricism was applied to the infrastructure. The brevity was applied to the product design. The wit was in the outline all along — we just stopped reading it.*
+
+---
+
+## Epilogue: Post-Phase-1 Status (as of 2026-04-22)
+
+This document scoped to Phase 1. Brief notes on what happened since:
+
+- **Phase 2** (April 19): built the daemon layer the outline actually called for. New crates `devdev-daemon`, `devdev-tui`, `devdev-tasks`, `devdev-integrations`. `devdev up/down/status` + IPC + checkpoint save/restore + task scheduler with approval gate + GitHub adapter. P2-06 (session router), P2-07 (monitor PR), P2-09 (E2E) still pending.
+
+- **Phase 3**: the consolidation this postmortem implicitly demanded. The sandbox engine crates (`devdev-vfs`, `-wasm`, `-git`, `-shell`) were collapsed into a single `devdev-workspace` crate that mounts a real filesystem via FUSE/WinFSP. (`devdev-acp` survived — it's the agent-protocol layer, not part of the sandbox engine.) The agent sees a real kernel, runs real binaries, pipes work natively. The elaborate in-memory reimplementation of coreutils/git/shell was deleted. The sandbox boundary moved from "reimplement Unix in process" to "mount a private filesystem and spawn a PTY against it" — which is what the outline meant by "sandbox" in the first place.
+
+- **Phase 4** (today): Windows WinFSP driver. Hand-rolled MIT-compatible FFI (the `winfsp` crate is GPL-3.0). Drive-letter mounts, delay-loaded `winfsp-x64.dll`, coarse-guard dispatcher, Ino-as-UserContext encoding. 2 smoke tests validate mount round-trip; Linux FUSE path unchanged. Workspace now passes identically on both OSes: 390+ tests, clippy clean on `-D warnings`.
+
+- **What's still stubbed:** `acp_backend.rs` returns `NOT_WIRED` for all session operations. `devdev send` and `task/add` route through it. Real ACP session wiring is the next major work item (Phase 5).
+
+The Phase 1 lessons above still apply — especially "lifecycle is an architectural constraint, not a feature to add later." The Phase 3 consolidation was the structural fix that this postmortem prescribed.

@@ -1,7 +1,7 @@
 ---
 id: session-router
 title: "Session Router"
-status: not-started
+status: in-progress
 type: composition
 phase: 2
 crate: devdev-daemon
@@ -26,13 +26,15 @@ Maps tasks to ACP agent sessions. Each task gets its own logical session with ac
 - Interactive/chat session: one session for the TUI/headless user interaction (not tied to a task).
 
 **Out:**
-- Subprocess pool (multiple Copilot CLI processes). Start with one. Pool if multi-session doesn't work.
-- Session migration across daemon restarts (sessions die on restart; tasks resume with fresh sessions from checkpoint state).
+- Subprocess pool (multiple Copilot CLI processes). PoC (2026-04-22) confirmed one subprocess multiplexes cleanly; pool retained as a future fallback only.
 - Custom system prompts or fine-tuning.
+
+**Open (punted to Phase 5):**
+- Session migration across daemon restarts. Originally declared out-of-scope on the assumption that sessions die with the subprocess. The P2-06 PoC showed Copilot advertises `loadSession` + `sessionCapabilities.list` in its `initialize` response, so Copilot-side session state may persist across CLI process restarts. If `loadSession(sessionId)` actually restores conversation history, the checkpoint can store `(task_id → sessionId)` and skip context replay on `devdev up --checkpoint`. Until validated, the current design replays `SessionContext.initial_prompt()` on recovery (see [cap 15](15-vfs-serialization.md) note).
 
 ## PoC Requirement (Spec Rule 2)
 
-Critical: Does one `copilot --acp --stdio` subprocess support multiple concurrent `session/new` calls?
+Critical: Does one `copilot --acp` subprocess support multiple concurrent `session/new` calls?
 
 1. Start one subprocess.
 2. Send `session/new` twice with different session IDs.
@@ -41,7 +43,24 @@ Critical: Does one `copilot --acp --stdio` subprocess support multiple concurren
 
 If this fails: fall back to one subprocess per session (subprocess pool).
 
-**PoC Result:** _Not yet run._
+**PoC Result (2026-04-22):** ✅ **PASS** — one-subprocess multiplex confirmed.
+
+- Command: `copilot --acp --allow-all-tools` (note: flag is `--acp`, not `--acp --stdio`; stdio is the only transport). Version: `GitHub Copilot CLI 1.0.34`. ACP `protocolVersion: 1`.
+- Two back-to-back `session/new` calls on one subprocess returned distinct `sessionId`s.
+- Parallel `session/prompt` dispatches (APPLE to session A, ORANGE to session B) returned correctly-tagged `session/update` streams with zero cross-contamination. JSON-RPC id correlation required (responses are not FIFO).
+- Auth: pre-existing `gh auth login` credentials were used automatically; advertised `copilot-login` auth method returned `{}` when already authenticated. No interactive login needed if gh CLI is logged in to a Copilot-enabled account.
+- Caveats: `--allow-all-tools` (or `COPILOT_ALLOW_ALL=1`) required for non-interactive mode even for text-only prompts. `copilot` on Windows is a `.cmd` shim; any spawner must handle shell invocation.
+- Open follow-ups (not blockers for P2-06): crash blast-radius (one bad session killing the process affects all), per-session rate limits, stress-test with dozens of concurrent turns.
+- Scratch script retained at `target/tmp/poc-session-router/poc.mjs`.
+
+**Design decision:** `AcpSessionBackend` uses **one long-lived subprocess, multiplexing N sessions** via the existing `AcpClient` pending-map. Subprocess-per-session pool retained as a future fallback behind a config flag if a Copilot regression is ever observed.
+
+## Open Questions (unresolved by the PoC)
+
+1. **Crash blast-radius.** One subprocess hosts N sessions, so a single Copilot crash (OOM, panic, auth token expiry mid-turn) takes down every in-flight task simultaneously. `SessionRouter::recover()` handles restart + recreate, but the UX impact — N tasks all hiccup at once — is untested. Mitigation if it becomes painful: promote the subprocess-pool fallback behind a `--sessions-per-process N` config knob.
+2. **Per-session rate limits.** GitHub applies Copilot quotas per account, not per session. Unclear whether 10 concurrent sessions count as 10× the quota. Needs a soak test once the monitor-PR task is real.
+3. **Stress scale.** PoC validated 2 concurrent sessions. Real-world load (one session per interactive chat + one per active PR monitor + one per scheduled task) could be 10–20. No data point on when throughput degrades.
+4. **`loadSession` viability.** See [cap 15](15-vfs-serialization.md). If Copilot actually restores conversation state from a `sessionId`, checkpoint-and-resume gets dramatically simpler.
 
 ## Interface
 

@@ -53,10 +53,10 @@ impl TaskRegistry {
         let id = task.id().to_string();
         self.tasks.insert(id.clone(), task);
         // Bump next_id past any numeric suffix.
-        if let Some(num) = id.strip_prefix("t-").and_then(|s| s.parse::<u64>().ok()) {
-            if num >= self.next_id {
-                self.next_id = num + 1;
-            }
+        if let Some(num) = id.strip_prefix("t-").and_then(|s| s.parse::<u64>().ok())
+            && num >= self.next_id
+        {
+            self.next_id = num + 1;
         }
         id
     }

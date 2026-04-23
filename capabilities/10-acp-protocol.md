@@ -144,7 +144,15 @@ pub struct InitializeResult {
 // --- Session ---
 pub struct NewSessionParams {
     pub cwd: String,
-    pub mcp_servers: Vec<McpServerConfig>,
+    pub mcp_servers: Vec<McpServerConfig>,  // see cap 28 for schema
+}
+
+// Tagged union on `type`; cap-28 PoC (2026-04-22) verified Copilot CLI
+// rejects a flat {name, url}. Headers are array-of-{name,value}.
+pub enum McpServerConfig {
+    Http  { name: String, url: String, headers: Vec<McpHeader> },
+    Sse   { name: String, url: String, headers: Vec<McpHeader> },
+    Stdio { name: String, command: String, args: Vec<String>, env: Vec<McpHeader> },
 }
 
 pub struct PromptParams {

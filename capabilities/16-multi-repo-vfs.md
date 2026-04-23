@@ -1,16 +1,18 @@
 ---
 id: multi-repo-vfs
 title: "Multi-Repo VFS Mounts"
-status: not-started
+status: done
 type: leaf
 phase: 2
-crate: devdev-vfs
+crate: devdev-workspace  # originally devdev-vfs; consolidated in Phase 3
 priority: P0
 depends-on: []
 effort: M
 ---
 
 # P2-01 — Multi-Repo VFS Mounts
+
+> **Status note (2026-04-22):** Shipped against the original `MemFs::mount/unmount/mounts` API. Phase 3 deleted `MemFs`; multi-repo visibility is now a property of `devdev-workspace`'s real-FS mount and is exposed differently (one workspace root with multiple bind-style attaches, not multiple in-memory mount points). The product behavior — "agent sees several repos under stable paths" — still holds; the API surface described below is **historical**.
 
 Phase 1 loads one repo at `/`. The daemon manages many repos simultaneously — the agent monitoring three PRs across two repos needs all three accessible in the same VFS. This capability makes `MemFs` support multiple repos mounted under `/repos/<owner>/<name>/`.
 

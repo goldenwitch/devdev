@@ -44,13 +44,15 @@
 
 ### Transport Modes
 
-**stdio (recommended for embedding):**
+**stdio (the only mode in current Copilot CLI, recommended for embedding):**
 ```bash
-copilot --acp --stdio
+copilot --acp
 ```
-Spawn as subprocess. Write JSON-RPC to stdin, read from stdout. stderr is for logs (pass through or discard).
+The `--acp` flag puts the CLI in ACP mode over its inherited stdin/stdout — there is no separate `--stdio` flag. Write JSON-RPC (NDJSON) to stdin, read from stdout. stderr is for logs (pass through or discard).
 
-**TCP mode:**
+> **PoC finding (2026-04-22):** Non-interactive use additionally requires `--allow-all-tools` (or `COPILOT_ALLOW_ALL=1`); without it the CLI blocks on a permission prompt even for text-only turns. Validated against `GitHub Copilot CLI 1.0.34`, protocol version `1`.
+
+**TCP mode (research-era documentation — not exposed by current CLI):**
 ```bash
 copilot --acp --port 3000
 ```
@@ -913,7 +915,7 @@ During `initialize`, client and agent exchange capabilities:
 
 ### Option A: ACP Client with `session/request_permission` (RECOMMENDED)
 
-DevDev spawns `copilot --acp --stdio` and implements an ACP client:
+DevDev spawns `copilot --acp --allow-all-tools` and implements an ACP client:
 
 1. Intercept **`session/request_permission`** — this fires for every tool call.
    - Inspect `toolCall.rawInput` to get the command.
@@ -962,7 +964,7 @@ DevDev starts an MCP server that provides virtual tools. Pass this to `session/n
 ```
 DevDev (Rust ACP Client)
   │
-  ├── Spawn: copilot --acp --stdio
+  ├── Spawn: copilot --acp --allow-all-tools
   │
   ├── initialize: advertise { terminal: true, fs: { readTextFile: true, writeTextFile: true } }
   │

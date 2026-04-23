@@ -1,23 +1,18 @@
 //! Guardrail: the scenarios crate must depend ONLY on user-surface
-//! types. Engine internals (`devdev-shell`, `devdev-wasm`,
-//! `devdev-git`, `devdev-acp`) must never be direct deps. If they
-//! leak in as a direct dep, the scenarios crate has stopped being
-//! a user-surface harness and is peeking at implementation — which
-//! is exactly the drift this meta-test exists to catch.
+//! types. Engine internals (`devdev-acp`) must never be direct
+//! deps. If it leaks in as a direct dep, the scenarios crate has
+//! stopped being a user-surface harness and is peeking at
+//! implementation — which is exactly the drift this meta-test
+//! exists to catch.
 //!
 //! Transitive deps are fine (devdev-daemon itself depends on
-//! devdev-vfs etc.). This test only inspects the top level.
+//! devdev-workspace etc.). This test only inspects the top level.
 
 use std::process::Command;
 
 use devdev_scenarios::workspace_root;
 
-const FORBIDDEN: &[&str] = &[
-    "devdev-shell",
-    "devdev-wasm",
-    "devdev-git",
-    "devdev-acp",
-];
+const FORBIDDEN: &[&str] = &["devdev-acp"];
 
 #[test]
 fn no_engine_crates_as_direct_deps() {

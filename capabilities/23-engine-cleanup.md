@@ -1,7 +1,7 @@
 ---
 id: engine-cleanup
 title: "Engine Cleanup (Phase 1 Gaps)"
-status: not-started
+status: partial
 type: leaf
 phase: 2
 crate: devdev-wasm, devdev-git

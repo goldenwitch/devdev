@@ -1,7 +1,7 @@
 ---
 id: task-manager
 title: "Task Manager & Approval Gate"
-status: not-started
+status: done
 type: composition
 phase: 2
 crate: devdev-tasks

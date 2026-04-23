@@ -90,11 +90,47 @@ pub struct NewSessionParams {
     pub mcp_servers: Vec<McpServerConfig>,
 }
 
+/// Name/value pair used for HTTP headers and stdio env entries in
+/// [`McpServerConfig`]. ACP's mcpServers schema uses array-of-objects here
+/// (not a map), validated empirically against Copilot CLI 1.0.34 during the
+/// cap-28 MCP PoC (2026-04-22). See `target/tmp/poc-mcp/`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
-pub struct McpServerConfig {
+pub struct McpHeader {
     pub name: String,
-    pub url: String,
+    pub value: String,
+}
+
+/// MCP server descriptor passed to the agent via
+/// [`NewSessionParams::mcp_servers`]. Tagged by `type` on the wire; Copilot
+/// CLI rejects a flat `{name, url}` shape with a Zod error.
+///
+/// Verified transports (PoC 2026-04-22): `http` (Streamable HTTP,
+/// protocolVersion 2025-11-25) with bearer auth passed through `headers`.
+/// `sse` and `stdio` arms are schema-accepted but not exercised yet.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum McpServerConfig {
+    Http {
+        name: String,
+        url: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        headers: Vec<McpHeader>,
+    },
+    Sse {
+        name: String,
+        url: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        headers: Vec<McpHeader>,
+    },
+    Stdio {
+        name: String,
+        command: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        args: Vec<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        env: Vec<McpHeader>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

@@ -1,10 +1,6 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/devdev-vfs",
-    "crates/devdev-wasm",
-    "crates/devdev-git",
-    "crates/devdev-shell",
     "crates/devdev-acp",
     "crates/devdev-cli",
     "crates/devdev-integrations",
@@ -12,6 +8,7 @@ members = [
     "crates/devdev-tasks",
     "crates/devdev-tui",
     "crates/devdev-scenarios",
+    "crates/devdev-workspace",
 ]
 
 [workspace.package]
@@ -38,27 +35,19 @@ futures = "0.3"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
-# WASM runtime
-wasmtime = "31"
-wasmtime-wasi = "31"
-
-# Git
-git2 = "0.20"
-
-# Glob matching
-globset = "0.4"
-
-# Regex (used by native grep)
-regex = "1"
-
-# Text diffing (used by native diff)
-similar = "2"
-
 # CLI
 clap = { version = "4", features = ["derive"] }
 
 # HTTP
 reqwest = { version = "0.12", features = ["json"] }
 
+# Virtual filesystem drivers (Linux only — cfg-gated in consumers)
+fuser = "0.15"
+libc = "0.2"
+
+# Cross-platform PTY
+portable-pty = "0.9"
+
 # Testing
 tempfile = "3"
+

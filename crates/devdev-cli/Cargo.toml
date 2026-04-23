@@ -1,6 +1,6 @@
 [package]
 name = "devdev-cli"
-description = "DevDev CLI binary and sandbox orchestrator"
+description = "DevDev CLI binary (daemon lifecycle subcommands)"
 version.workspace = true
 edition.workspace = true
 
@@ -8,17 +8,7 @@ edition.workspace = true
 name = "devdev"
 path = "src/main.rs"
 
-# Scripted NDJSON agent used by `tests/acceptance_cli.rs`. Cheap to
-# compile; not wired into any release path.
-[[bin]]
-name = "devdev-fake-agent"
-path = "src/bin/devdev-fake-agent.rs"
-
 [dependencies]
-devdev-vfs = { path = "../devdev-vfs" }
-devdev-wasm = { path = "../devdev-wasm" }
-devdev-git = { path = "../devdev-git" }
-devdev-shell = { path = "../devdev-shell" }
 devdev-acp = { path = "../devdev-acp" }
 devdev-daemon = { path = "../devdev-daemon" }
 devdev-tasks = { path = "../devdev-tasks" }
@@ -31,8 +21,6 @@ tokio = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
-git2 = { workspace = true }

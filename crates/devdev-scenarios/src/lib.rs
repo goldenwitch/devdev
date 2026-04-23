@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow};
 use devdev_daemon::ipc::{IpcClient, read_port};
-use devdev_vfs::MemFs;
+use devdev_workspace::{Fs, Kind, ROOT_INO};
 use serde::{Deserialize, Serialize};
 
 /// Default deadline for polling the port file after spawning `devdev up`.
@@ -216,37 +216,51 @@ pub struct CheckpointProjection {
 impl CheckpointProjection {
     /// Decode a checkpoint blob and project to the stable shape.
     pub fn from_bytes(data: &[u8]) -> Result<Self> {
-        let fs = MemFs::deserialize(data)
-            .map_err(|e| anyhow!("deserialize checkpoint: {e}"))?;
-        Ok(Self::from_memfs(&fs))
+        let fs = Fs::deserialize(data)
+            .map_err(|e| anyhow!("deserialize checkpoint: {e:?}"))?;
+        Ok(Self::from_fs(&fs))
     }
 
-    /// Project an in-memory `MemFs`.
-    pub fn from_memfs(fs: &MemFs) -> Self {
-        use devdev_vfs::types::Node;
-
-        let mut paths = Vec::new();
+    /// Project an in-memory `Fs` by walking from the root.
+    pub fn from_fs(fs: &Fs) -> Self {
+        let mut paths = vec!["/".to_string()];
         let mut file_hashes = BTreeMap::new();
 
-        for (path, node) in fs.tree() {
-            let s = path.to_string_lossy().to_string();
-            paths.push(s.clone());
-            if let Node::File { content, .. } = node {
-                file_hashes.insert(s, sha256_hex(content));
+        let mut stack: Vec<(u64, String)> = vec![(ROOT_INO.0, "/".to_string())];
+        while let Some((ino_raw, path)) = stack.pop() {
+            let ino = devdev_workspace::Ino(ino_raw);
+            let entries = match fs.readdir(ino, 0) {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+            for entry in entries {
+                let name = String::from_utf8_lossy(&entry.name).into_owned();
+                if name == "." || name == ".." {
+                    continue;
+                }
+                let child_path = if path == "/" {
+                    format!("/{name}")
+                } else {
+                    format!("{path}/{name}")
+                };
+                paths.push(child_path.clone());
+                match entry.kind {
+                    Kind::Directory => stack.push((entry.ino.0, child_path)),
+                    Kind::File => {
+                        if let Ok(bytes) = fs.read_path(child_path.as_bytes()) {
+                            file_hashes.insert(child_path, sha256_hex(&bytes));
+                        }
+                    }
+                    Kind::Symlink => {}
+                }
             }
         }
         paths.sort();
 
-        let mounts = fs
-            .mounts()
-            .into_iter()
-            .map(|p| p.to_string_lossy().to_string())
-            .collect();
-
         CheckpointProjection {
             paths,
             file_hashes,
-            mounts,
+            mounts: BTreeSet::new(),
         }
     }
 

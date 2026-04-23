@@ -27,6 +27,8 @@ Six crates forming a virtual unix environment:
 
 ### Known Gaps in the Engine
 
+> **Historical (2026-04-19).** This section reflects the state at the start of Phase 2. Most of these gaps were either closed (Phase 2: git `--since`/`--follow`/path filtering, git diff `-- path`) or rendered moot by Phase 3 consolidation (the `devdev-wasm`, `devdev-git`, and `devdev-shell` crates were collapsed into `devdev-workspace`, which mounts a real OS filesystem via FUSE/WinFSP — no more VFS temp-dir materialization). Preserved for historical context.
+
 | Gap | Impact | Effort |
 |-----|--------|--------|
 | sed/awk missing | Agent gets exit 127 on common commands | Medium — build `sd.wasm`, wire shim |
@@ -287,6 +289,8 @@ trait GitHubAdapter: Send + Sync {
 
 ### 3.6 Sandbox Lifecycle Changes
 
+> **Historical (2026-04-22).** This subsection enumerated changes to `devdev-vfs`, `devdev-git`, `devdev-shell`, and `devdev-acp`. Phase 3 deleted the first three (`devdev-vfs`, `devdev-git`, `devdev-shell`) and consolidated their responsibilities into `devdev-workspace`, which mounts a real OS filesystem via FUSE/WinFSP. `devdev-acp` survived. The product intent below ("VFS persistence", "multiple repos", "shell reuse", "multi-session ACP") still matters and feeds the remaining Phase-2 work (P2-06 session router) plus a future Phase-5 checkpoint redesign — but the table's crate column for the deleted crates and `MemFs`-based API references are obsolete. Preserved for context.
+
 **Modifications to existing crates.** The sandbox must support:
 
 | Change | Crate | Description |
@@ -298,6 +302,8 @@ trait GitHubAdapter: Send + Sync {
 | ACP session management | `devdev-acp` | Support multiple concurrent sessions over one Copilot subprocess |
 
 ### 3.7 Engine Cleanup (from Phase 1 gaps)
+
+> **Historical (2026-04-22).** Most items below were rendered moot by Phase 3: with a real OS mount, the agent runs the host's actual `sed`, `awk`, and `git` binaries — no WASM shim needed, no per-command flag gaps. "Reconcile ACP spec" landed in Phase 1 cleanup. Preserved for context.
 
 | Item | Crate | Work |
 |------|-------|------|
@@ -430,7 +436,7 @@ Once per week, read the spec against the current implementation. File drift as i
 | # | Question | Options | How We'll Resolve |
 |---|----------|---------|-------------------|
 | 1 | IPC mechanism for CLI ↔ daemon | Unix domain socket (Linux/Mac) + named pipe (Windows) vs. localhost TCP | Build PoC on all three platforms. Pick simplest cross-platform option. |
-| 2 | Copilot CLI multi-session | Does one `copilot --acp --stdio` subprocess support multiple `session/new` calls concurrently? | Test with live Copilot CLI. If not, manage a subprocess pool. |
+| 2 | Copilot CLI multi-session | Does one `copilot --acp` subprocess support multiple `session/new` calls concurrently? | Test with live Copilot CLI. If not, manage a subprocess pool. |
 | 3 | Checkpoint format | bincode (fast, Rust-only) vs. msgpack (cross-language) vs. SQLite (queryable) | bincode unless we need cross-language access. PoC serialize a 500MB VFS, measure speed. |
 | 4 | GitHub API auth scope | Does `GH_TOKEN` with Copilot scope also cover repo/PR API calls? | Test. If not, document required scopes. |
 | 5 | TUI library | ratatui vs. cursive vs. crossterm raw | Build hello-world TUI with ratatui. If it handles our layout, use it. |

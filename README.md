@@ -38,6 +38,15 @@ Specs cover: virtual filesystem, WASM tool engine, shell parser, virtual git, an
 
 ## Status
 
-Sandbox core implemented. 10 of 15 capabilities complete (VFS, WASM engine + tool registry, virtual git, shell parser + builtins, ACP protocol) with 170 passing tests, clippy-clean on `-D warnings`. Remaining: shell executor, ACP client + hooks, sandbox integration, and the end-to-end test harness.
+**Phase 4 complete (2026-04-22)** — Windows + Linux parity.
+
+- **Phase 1** (caps 00–14): sandbox engine — VFS, WASM tool registry, virtual git, shell parser/executor, ACP protocol + client + hooks, sandbox integration, test harness.
+- **Phase 2** (P2-00 – P2-05, P2-08): persistent architecture — `devdev up/down/status` daemon, checkpoint save/restore, chat TUI/headless mode, task scheduler + approval gate, GitHub adapter, engine cleanup.
+- **Phase 3**: consolidation — collapsed four in-memory engine crates (`devdev-vfs`/`-wasm`/`-git`/`-shell`) into a single kernel-mount `devdev-workspace` crate; everything now runs on a real OS via FUSE (Linux) or WinFSP (Windows). `devdev-acp` (agent-protocol layer) was not part of the sandbox engine and survived unchanged.
+- **Phase 4**: Windows WinFSP driver (hand-rolled MIT FFI, no GPL wrapper) with drive-letter mounts, delay-loaded `winfsp-x64.dll`, coarse-guard dispatcher, and round-trip smoke tests.
+
+390+ tests passing across the workspace; `cargo clippy --workspace --all-targets -- -D warnings` clean on both OSes.
+
+Remaining: session router (P2-06), PR monitor task (P2-07), full E2E (P2-09), real ACP session backend (stubbed as `NOT_WIRED`).
 
 See [capabilities/](capabilities/) for the work-item graph and [spirit/](spirit/) for architecture specs.

@@ -10,19 +10,18 @@ publish = false
 #
 #   * `devdev-daemon::ipc` — the TCP/NDJSON protocol a shell script
 #     could also speak.
-#   * `devdev-vfs` — the public checkpoint format a user could inspect
-#     on disk.
+#   * `devdev-workspace` — the public checkpoint format a user could
+#     inspect on disk.
 #
-# Engine internals (`devdev-shell`, `devdev-wasm`, `devdev-git`,
-# `devdev-acp`) are NEVER direct deps. A CI guard greps `cargo tree`
-# to keep it that way.
+# Engine internals (`devdev-acp`) are NEVER direct deps. A CI guard
+# greps `cargo tree` to keep it that way.
 #
 # `assert_cmd` is a regular dep because the harness itself (not just
 # tests) resolves the `devdev` binary via `cargo_bin`. This crate is
 # `publish = false`, so bloating release artifacts is a non-concern.
 [dependencies]
 devdev-daemon = { path = "../devdev-daemon" }
-devdev-vfs = { path = "../devdev-vfs" }
+devdev-workspace = { path = "../devdev-workspace" }
 anyhow = { workspace = true }
 assert_cmd = "2"
 serde = { workspace = true }

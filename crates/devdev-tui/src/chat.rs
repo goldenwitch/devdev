@@ -62,21 +62,22 @@ impl ChatHistory {
 
     /// Append text to the last agent message, or create a new one.
     pub fn append_agent_text(&mut self, text: &str) {
-        if let Some(last) = self.messages.last_mut() {
-            if last.role == ChatRole::Agent && !last.complete {
-                last.text.push_str(text);
-                return;
-            }
+        if let Some(last) = self.messages.last_mut()
+            && last.role == ChatRole::Agent
+            && !last.complete
+        {
+            last.text.push_str(text);
+            return;
         }
         self.messages.push(ChatMessage::agent(text, false));
     }
 
     /// Mark the last agent message as complete.
     pub fn complete_agent_message(&mut self) {
-        if let Some(last) = self.messages.last_mut() {
-            if last.role == ChatRole::Agent {
-                last.complete = true;
-            }
+        if let Some(last) = self.messages.last_mut()
+            && last.role == ChatRole::Agent
+        {
+            last.complete = true;
         }
     }
 

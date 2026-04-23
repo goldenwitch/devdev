@@ -4,7 +4,7 @@ title: "In-Memory Virtual Filesystem"
 status: done
 type: leaf
 phase: 1
-crate: devdev-vfs
+crate: devdev-workspace  # originally devdev-vfs; consolidated in Phase 3
 priority: P0
 depends-on: []
 effort: L

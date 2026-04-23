@@ -63,8 +63,12 @@ pub struct UpArgs {
     #[arg(long, default_value = "copilot")]
     pub agent_program: String,
 
-    /// Extra arguments passed to the agent program.
-    #[arg(long, num_args = 0..)]
+    /// Extra arguments passed to the agent program. Defaults to
+    /// `--acp --allow-all-tools` for Copilot CLI — ACP/NDJSON mode with
+    /// non-interactive tool permissions, validated by the P2-06 PoC.
+    /// Override with `--agent-arg ...` (repeat) when using a different
+    /// agent; pass `--agent-arg ""` to clear.
+    #[arg(long, num_args = 0.., default_values_t = ["--acp".to_string(), "--allow-all-tools".to_string()])]
     pub agent_arg: Vec<String>,
 }
 

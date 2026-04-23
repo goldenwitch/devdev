@@ -38,7 +38,7 @@ fn fake_review_fn() -> ReviewFn {
 fn mock_github(sha: &str) -> MockGitHubAdapter {
     MockGitHubAdapter::new()
         .with_pr("org", "repo", mock_pr(247, sha))
-        .with_diff("org", "repo", 247, "diff --git a/src/config.rs\n+fn parse()".into())
+        .with_diff("org", "repo", 247, "diff --git a/src/config.rs\n+fn parse()")
         .with_status("org", "repo", 247, PrStatus { mergeable: Some(true), checks: vec![] })
 }
 
@@ -203,7 +203,7 @@ async fn pr_merged_transitions_to_completed() {
     let github: Arc<dyn devdev_integrations::GitHubAdapter> = Arc::new(
         MockGitHubAdapter::new()
             .with_pr("org", "repo", pr)
-            .with_diff("org", "repo", 247, "".into())
+            .with_diff("org", "repo", 247, "")
             .with_status("org", "repo", 247, PrStatus { mergeable: None, checks: vec![] }),
     );
     let (gate, _handle) = approval::approval_channel(ApprovalPolicy::AutoApprove, Duration::from_secs(5));

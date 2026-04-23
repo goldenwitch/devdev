@@ -1,0 +1,41 @@
+[package]
+name = "devdev-workspace"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# The virtual workspace driver. Owns an in-memory POSIX-ish filesystem
+# (MemFs, inode-centric), a per-platform FS driver (FUSE on Linux,
+# WinFSP on Windows) that mounts it, and a PTY-backed `exec` that
+# runs real host binaries against the mount.
+#
+# Encapsulation rule (enforced by tests/encapsulation.rs):
+#   No code in this crate may call std::fs::* / tokio::fs::* / std::os::*
+#   on a path that originates from the agent. Agent paths resolve
+#   through MemFs. The only host-fs ops are the one-time mount-point
+#   mkdir/rmdir on the path we own.
+
+[dependencies]
+serde = { workspace = true }
+bincode = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+portable-pty = { workspace = true }
+tempfile = { workspace = true }
+
+# FUSE is Linux-only. On Windows this dep resolves to nothing and the
+# winfsp driver module takes over (currently a stub).
+[target.'cfg(target_os = "linux")'.dependencies]
+fuser = { workspace = true }
+libc = { workspace = true }
+
+# Windows uses hand-rolled FFI against the WinFSP import library (see
+# build.rs). We pull in `libc` for primitive size aliases.
+[target.'cfg(windows)'.dependencies]
+libc = { workspace = true }
+
+[dev-dependencies]
+
+[lib]
+path = "src/lib.rs"

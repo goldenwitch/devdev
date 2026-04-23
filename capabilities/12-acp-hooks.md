@@ -1,7 +1,7 @@
 ---
 id: acp-hooks
 title: "ACP Hook Handlers (Terminal, FS, Permissions)"
-status: not-started
+status: done
 type: composition
 phase: 4
 crate: devdev-acp
@@ -11,6 +11,8 @@ effort: M
 ---
 
 # 12 — ACP Hook Handlers (Terminal, FS, Permissions)
+
+> **Status note (2026-04-22, post-P2-06 PoC):** This capability was built on the assumption that every `terminal/create` and `fs/*` call from the Copilot CLI would route through `SandboxHandler`. The P2-06 PoC revealed the prod invocation is `copilot --acp --allow-all-tools`, which delegates all tool execution to Copilot's own internal tool bundle (shell, fs, web, etc.) running directly against the mounted workspace. **In that mode, the handlers below are never called.** The code still compiles, passes its tests, and remains in the tree as a **safety-net for a hypothetical `--strict-sandbox` profile** — same binary, no `--allow-all-tools`, every tool call forced through DevDev. No caller exercises that profile today. If DevDev ever needs DevDev-specific tools (task queries, ledger lookups), the path is MCP ([capability 28](28-mcp-tool-injection.md)), not these hooks.
 
 Implement the `AcpHandler` trait — the business logic that runs when the Copilot CLI agent makes requests. This is where the sandbox enforcement happens: every `terminal/create` request routes through the virtual shell, every `fs/*` request routes through the VFS, and every permission request gets auto-approved (it's all virtual — nothing to protect against).
 

@@ -132,14 +132,14 @@ DevDev sends evaluation context to the Copilot CLI through ACP session managemen
 
 ## Session Lifecycle
 
-1. **Init:** Spawn `copilot --acp --output-format json`. Establish stdio RPC channel.
-2. **Auth:** The CLI authenticates using the user's existing credentials. Supported methods:
-   - **`GH_TOKEN` environment variable** (fine-grained PAT) — recommended for daemon mode.
-   - **Device code flow (RFC 8628)** — automatic fallback for headless environments.
-   - **Existing `gh auth` session** — works if the user has already authenticated.
-3. **Prime:** Create a session via `session.create()`. Send evaluation context as the initial prompt.
-4. **Loop:** The CLI reasons and issues tool calls → ACP `preToolUse` hook fires → DevDev executes virtually → returns result → CLI continues. Repeat until the CLI produces a final verdict.
-5. **Collect:** Parse the CLI's final output from the JSONL stream.
+1. **Init:** Spawn `copilot --acp --allow-all-tools`. Establish stdio NDJSON RPC channel. (The `--allow-all-tools` flag skips Copilot's interactive permission prompts and is required for non-interactive daemon use; `--output-format json` from earlier drafts of this doc is not the right flag — `--acp` implies NDJSON-over-stdio.)
+2. **Auth:** The CLI authenticates using the user's existing credentials. Supported methods, in practical preference order:
+   - **Existing `gh auth` session** — the Copilot CLI reuses `gh auth login` credentials transparently. If the user is already logged in to a Copilot-enabled account, no further setup is needed (validated 2026-04-22 via the P2-06 PoC).
+   - **`GH_TOKEN` / `GITHUB_TOKEN` environment variable** — either a fine-grained PAT with Copilot scope, or a gh-CLI OAuth token (e.g. `GH_TOKEN=$(gh auth token)`).
+   - **Device code flow (RFC 8628)** — interactive fallback for first-time setup on a fresh machine.
+3. **Prime:** Create a session via `session/new`. Send evaluation context as the initial prompt.
+4. **Loop:** On `--allow-all-tools`, Copilot runs its own tools (shell, fs, web) directly against the mounted workspace; DevDev observes progress via `session/update` notifications and surfaces text chunks as responses. (Under a hypothetical `--strict-sandbox` mode — no `--allow-all-tools` — tool calls instead route back via ACP `terminal/*` + `fs/*` client capabilities; see [capability 12](../capabilities/12-acp-hooks.md).)
+5. **Collect:** Assemble `agent_message_chunk` text across the turn; terminate on `stopReason: endTurn`.
 6. **Teardown:** End the session. Kill the subprocess. Drop the VFS.
 
 ### Timeouts & Error Handling
@@ -158,13 +158,13 @@ For unattended operation, DevDev needs to authenticate the Copilot CLI without h
 
 | Method | Setup | Tradeoff |
 |--------|-------|----------|
-| **Fine-grained PAT via `GH_TOKEN`** | User creates a PAT with Copilot scope, sets env var | Simplest for daemons. Token must be rotated manually. |
-| **Device code flow** | CLI prompts for one-time browser approval | Works headless but requires initial human setup. |
-| **OAuth token from `gh auth`** | User runs `gh auth login` once on the machine | Relies on `gh` CLI state. May expire. |
+| **OAuth via `gh auth`** | User runs `gh auth login` once; the Copilot CLI reuses the token transparently. Alternatively export `GH_TOKEN=$(gh auth token)` for scripts. | Lowest friction. Validated 2026-04-22. May expire per gh-CLI's refresh cadence. |
+| **Fine-grained PAT via `GH_TOKEN`** | User creates a PAT with Copilot scope, sets env var. | Deterministic for daemons and CI. Token must be rotated manually. |
+| **Device code flow** | CLI prompts for one-time browser approval. | Works headless but requires initial human setup. |
 
-Recommendation: Support all three. Default to `GH_TOKEN` if set, fall back to existing `gh auth` session, prompt for device code flow on first run.
+Recommendation: default to existing `gh auth` session, fall back to `GH_TOKEN` if set, prompt for device code flow on a fresh machine.
 
-**Important:** Classic PATs are NOT supported by the Copilot CLI — only fine-grained PATs work.
+**Important:** Classic PATs are NOT supported by the Copilot CLI — only fine-grained PATs work. gh-CLI OAuth tokens (`gho_*` prefix) *are* accepted.
 
 ---
 
@@ -212,8 +212,8 @@ See `spirit/research-acp.md` for full protocol details.
 
 ## Open Questions
 
-1. **CLI version pinning:** Should DevDev bundle or pin to a specific Copilot CLI version? Recommendation: pin to tested version, document minimum.
-2. **Terminal delegation verification:** Does Copilot CLI actually use `terminal/create` when the client advertises terminal capability, or does it still execute internally? Needs hands-on testing.
+1. **CLI version pinning:** Should DevDev bundle or pin to a specific Copilot CLI version? Recommendation: pin to tested version, document minimum. (PoC validated against 1.0.34.)
+2. ~~**Terminal delegation verification:** Does Copilot CLI actually use `terminal/create` when the client advertises terminal capability, or does it still execute internally?~~ ✅ **Resolved (2026-04-22, P2-06 PoC):** When launched with `--allow-all-tools`, Copilot runs its own internal tool bundle directly against the mounted workspace and does *not* route through ACP `terminal/create`. The ACP client capabilities path (see [capability 12](../capabilities/12-acp-hooks.md)) only engages under a `--strict-sandbox` profile that is not currently used. DevDev-specific tools should be exposed via MCP ([capability 28](../capabilities/28-mcp-tool-injection.md)) instead.
 3. **Context window management:** How much context can we inject in the initial prompt? The CLI has auto-compaction at 95% token usage — does it handle large PR diffs gracefully?
 ---
 

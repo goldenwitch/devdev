@@ -1,7 +1,7 @@
 ---
 id: chat-tui-headless
 title: "Chat TUI & Headless Mode"
-status: not-started
+status: done
 type: composition
 phase: 2
 crate: devdev-tui

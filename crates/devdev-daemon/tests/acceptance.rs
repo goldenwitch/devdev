@@ -1,7 +1,5 @@
 //! Acceptance tests for P2-02 — Daemon Lifecycle & IPC.
 
-use std::path::Path;
-
 use devdev_daemon::ipc::{self, IpcClient, IpcResponse, IpcServer};
 use devdev_daemon::{Daemon, DaemonConfig, DaemonError};
 use tempfile::TempDir;
@@ -86,10 +84,10 @@ async fn daemon_stop_saves_checkpoint() {
     let dir = TempDir::new().unwrap();
     let daemon = Daemon::start(test_config(&dir), false).await.unwrap();
 
-    // Write a file to the VFS.
+    // Write a file to the fs.
     {
-        let mut vfs = daemon.vfs.lock().await;
-        vfs.write(Path::new("/hello.txt"), b"world").unwrap();
+        let mut fs = daemon.fs.lock().await;
+        fs.write_path(b"/hello.txt", b"world").unwrap();
     }
 
     daemon.stop().await.unwrap();
@@ -108,9 +106,9 @@ async fn daemon_start_from_checkpoint() {
     {
         let daemon = Daemon::start(test_config(&dir), false).await.unwrap();
         {
-            let mut vfs = daemon.vfs.lock().await;
-            vfs.mkdir_p(Path::new("/src")).unwrap();
-            vfs.write(Path::new("/src/main.rs"), b"fn main() {}").unwrap();
+            let mut fs = daemon.fs.lock().await;
+            fs.mkdir_p(b"/src", 0o755).unwrap();
+            fs.write_path(b"/src/main.rs", b"fn main() {}").unwrap();
         }
         daemon.stop().await.unwrap();
     }
@@ -118,9 +116,9 @@ async fn daemon_start_from_checkpoint() {
     // Second daemon: start from checkpoint, verify data.
     {
         let daemon = Daemon::start(test_config(&dir), true).await.unwrap();
-        let vfs = daemon.vfs.lock().await;
-        assert_eq!(vfs.read(Path::new("/src/main.rs")).unwrap(), b"fn main() {}");
-        drop(vfs);
+        let fs = daemon.fs.lock().await;
+        assert_eq!(fs.read_path(b"/src/main.rs").unwrap(), b"fn main() {}");
+        drop(fs);
         daemon.stop().await.unwrap();
     }
 }
@@ -292,12 +290,19 @@ async fn daemon_no_checkpoint_start_fresh() {
     // Create a leftover checkpoint.
     std::fs::write(dir.path().join("checkpoint.bin"), b"garbage").unwrap();
 
-    // Start WITHOUT checkpoint → fresh VFS, ignores the checkpoint file.
+    // Start WITHOUT checkpoint → fresh fs, ignores the checkpoint file.
     let daemon = Daemon::start(test_config(&dir), false).await.unwrap();
-    let vfs = daemon.vfs.lock().await;
-    // Fresh VFS should have only the root directory.
-    assert!(vfs.list(Path::new("/")).unwrap().is_empty());
-    drop(vfs);
+    let fs = daemon.fs.lock().await;
+    // Fresh fs should have only the root directory (empty besides . and ..).
+    let root_ino = fs.resolve(b"/").unwrap();
+    let entries: Vec<_> = fs
+        .readdir(root_ino, 0)
+        .unwrap()
+        .into_iter()
+        .filter(|e| e.name.as_slice() != b"." && e.name.as_slice() != b"..")
+        .collect();
+    assert!(entries.is_empty());
+    drop(fs);
     daemon.stop().await.unwrap();
 }
 
@@ -311,8 +316,8 @@ async fn daemon_stop_no_checkpoint_when_disabled() {
 
     let daemon = Daemon::start(cfg, false).await.unwrap();
     {
-        let mut vfs = daemon.vfs.lock().await;
-        vfs.write(Path::new("/data.txt"), b"test").unwrap();
+        let mut fs = daemon.fs.lock().await;
+        fs.write_path(b"/data.txt", b"test").unwrap();
     }
     daemon.stop().await.unwrap();
 

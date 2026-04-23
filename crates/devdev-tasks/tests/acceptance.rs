@@ -99,17 +99,17 @@ impl Task for MockTask {
     async fn poll(&mut self) -> Result<Vec<TaskMessage>, TaskError> {
         let count = self.poll_count.fetch_add(1, Ordering::SeqCst) + 1;
 
-        if let Some(fail_at) = self.fail_on_poll {
-            if count >= fail_at {
-                return Err(TaskError::PollFailed("intentional failure".into()));
-            }
+        if let Some(fail_at) = self.fail_on_poll
+            && count >= fail_at
+        {
+            return Err(TaskError::PollFailed("intentional failure".into()));
         }
 
-        if let Some(max) = self.max_polls {
-            if count >= max {
-                self.status = TaskStatus::Completed;
-                return Ok(vec![TaskMessage::Text(format!("completed after {count} polls"))]);
-            }
+        if let Some(max) = self.max_polls
+            && count >= max
+        {
+            self.status = TaskStatus::Completed;
+            return Ok(vec![TaskMessage::Text(format!("completed after {count} polls"))]);
         }
 
         Ok(vec![TaskMessage::Text(format!("poll #{count}"))])

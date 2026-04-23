@@ -9,6 +9,8 @@ use crate::types::*;
 use crate::GitHubAdapter;
 
 type PrKey = (String, String, u64);
+type PostedReview = (String, String, u64, Review);
+type PostedComment = (String, String, u64, String);
 
 /// Test double that returns canned responses and records outgoing calls.
 pub struct MockGitHubAdapter {
@@ -16,8 +18,8 @@ pub struct MockGitHubAdapter {
     diffs: HashMap<PrKey, String>,
     comments: HashMap<PrKey, Vec<Comment>>,
     statuses: HashMap<PrKey, PrStatus>,
-    posted_reviews: Arc<Mutex<Vec<(String, String, u64, Review)>>>,
-    posted_comments: Arc<Mutex<Vec<(String, String, u64, String)>>>,
+    posted_reviews: Arc<Mutex<Vec<PostedReview>>>,
+    posted_comments: Arc<Mutex<Vec<PostedComment>>>,
     /// SHA overrides applied via `update_head_sha` (simulates new pushes).
     sha_overrides: Arc<Mutex<HashMap<PrKey, String>>>,
 }
@@ -77,12 +79,12 @@ impl MockGitHubAdapter {
     }
 
     /// Get all reviews that were posted.
-    pub fn posted_reviews(&self) -> Vec<(String, String, u64, Review)> {
+    pub fn posted_reviews(&self) -> Vec<PostedReview> {
         self.posted_reviews.lock().unwrap().clone()
     }
 
     /// Get all comments that were posted.
-    pub fn posted_comments(&self) -> Vec<(String, String, u64, String)> {
+    pub fn posted_comments(&self) -> Vec<PostedComment> {
         self.posted_comments.lock().unwrap().clone()
     }
 

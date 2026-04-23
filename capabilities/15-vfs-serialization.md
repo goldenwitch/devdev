@@ -1,16 +1,20 @@
 ---
 id: vfs-serialization
 title: "VFS Serialization for Checkpoint"
-status: not-started
+status: done
 type: leaf
 phase: 2
-crate: devdev-vfs
+crate: devdev-workspace  # originally devdev-vfs; consolidated in Phase 3
 priority: P0
 depends-on: []
 effort: M
 ---
 
 # P2-00 — VFS Serialization for Checkpoint
+
+> **Status note (2026-04-22):** Shipped against the original `MemFs` (BTreeMap-backed in-memory filesystem). Phase 3 deleted `MemFs` and replaced the in-process VFS with a real OS mount (FUSE on Linux, WinFSP on Windows) via `devdev-workspace`. The bincode blob format described below is therefore **historical**. The semantic intent — "persist enough state across `devdev down`/`devdev up --checkpoint` that the daemon resumes cleanly" — is unsatisfied in the new world and will be re-expressed as a Phase 5 capability (likely scoped to mount configs + task state + shell scrollback, not raw FS bytes since the host now owns those).
+>
+> **Additional finding (2026-04-22, post-P2-06 PoC):** The Copilot CLI advertises a `loadSession` capability and a `sessionCapabilities.list` method during `initialize`. That means Copilot-side session state (conversation history, tool-call context) *can* potentially survive a daemon restart — we don't have to re-seed from `SessionContext` on every `up`. The Phase 5 checkpoint redesign should investigate whether `loadSession(sessionId)` does what it sounds like and whether the sessionId is stable across CLI process restarts. If yes, the checkpoint can store `(task_id → sessionId)` and skip context replay. If no, the current replay-from-context approach in [cap 21](21-session-router.md) stays correct.
 
 The daemon needs to persist the virtual filesystem across restarts. This capability adds `serialize` and `deserialize` to `MemFs`, producing a self-contained binary blob that can be written to disk on `devdev down` and loaded on `devdev up --checkpoint`.
 

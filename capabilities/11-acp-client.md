@@ -17,7 +17,7 @@ Spawn the Copilot CLI as a subprocess, manage the stdio JSON-RPC channel, and ha
 ## Scope
 
 **In:**
-- Spawn `copilot --acp --stdio` subprocess
+- Spawn `copilot --acp` subprocess
 - Async stdio management: write requests to stdin, read responses/notifications from stdout
 - Request/response correlation by ID
 - Handle interleaved messages: during a blocking `session/prompt` call, the agent sends notifications (`session/update`) and requests (`session/request_permission`, `terminal/create`, `fs/*`) that must be processed concurrently
@@ -142,7 +142,7 @@ crates/devdev-acp/src/transport.rs  — async NDJSON reader/writer over AsyncRea
 ```
 
 Implementation notes:
-- `connect_transport(reader, writer, ...)` takes any `AsyncRead + AsyncWrite` pair — used by tests via `tokio::io::duplex`. `connect_process(program, args, ...)` is the real path that spawns `copilot --acp --stdio` with `kill_on_drop`.
+- `connect_transport(reader, writer, ...)` takes any `AsyncRead + AsyncWrite` pair — used by tests via `tokio::io::duplex`. `connect_process(program, args, ...)` is the real path that spawns `copilot --acp` with `kill_on_drop`. Prod invocation is `copilot --acp --allow-all-tools` (the `--allow-all-tools` flag is supplied by the caller, not hardcoded; see [cap 21](21-session-router.md) PoC notes).
 - Reader + writer run as separate `tokio::spawn` tasks. Outgoing messages flow through an `mpsc` channel so agent-initiated request handlers (spawned on the reader side) can enqueue responses without racing an in-flight client request.
 - Pending request correlation: `Arc<Mutex<HashMap<RequestId, oneshot::Sender<Response>>>>` + atomic `u64` counter. On reader EOF, every pending waiter is woken with an `internal_error("agent disconnected")` response.
 - Device-code auth flow is intentionally out of P0 scope — `authenticate()` only handles env-token short-circuit + a simple `authenticate` RPC with an advertised method. Interactive fallback is a P1 follow-up.
@@ -150,7 +150,7 @@ Implementation notes:
 
 ## Acceptance Criteria
 
-- [ ] Spawn `copilot --acp --stdio`, send `initialize`, receive response with capabilities
+- [ ] Spawn `copilot --acp`, send `initialize`, receive response with capabilities
 - [ ] `new_session()` returns a session ID
 - [ ] `prompt()` sends request, receives `session/update` notifications during wait, returns `PromptResult`
 - [ ] Agent `terminal/create` request dispatches to handler and response flows back

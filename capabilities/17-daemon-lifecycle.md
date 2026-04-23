@@ -1,7 +1,7 @@
 ---
 id: daemon-lifecycle
 title: "Daemon Lifecycle & IPC"
-status: not-started
+status: done
 type: composition
 phase: 2
 crate: devdev-daemon

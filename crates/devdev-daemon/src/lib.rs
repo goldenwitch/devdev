@@ -1,7 +1,8 @@
 //! Daemon lifecycle & IPC for DevDev.
 //!
-//! The daemon is the long-running process that owns the VFS, task state,
-//! and shell environments. CLI commands talk to it over IPC.
+//! The daemon is the long-running process that owns the virtual
+//! workspace filesystem (`Fs`) and task state. CLI commands talk
+//! to it over IPC.
 
 pub mod checkpoint;
 pub mod dispatch;
@@ -13,7 +14,7 @@ pub mod server;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use devdev_vfs::MemFs;
+use devdev_workspace::Fs;
 use tokio::sync::Mutex;
 
 /// Daemon configuration.
@@ -70,13 +71,13 @@ pub enum DaemonError {
     Io(#[from] std::io::Error),
 
     #[error("VFS error: {0}")]
-    Vfs(#[from] devdev_vfs::VfsError),
+    Vfs(#[from] devdev_workspace::Errno),
 }
 
 /// The daemon process.
 pub struct Daemon {
     pub config: DaemonConfig,
-    pub vfs: Arc<Mutex<MemFs>>,
+    pub fs: Arc<Mutex<Fs>>,
 }
 
 impl Daemon {
@@ -93,17 +94,17 @@ impl Daemon {
             pid::remove_pid(&config.data_dir)?;
         }
 
-        // Restore or create fresh VFS.
-        let vfs = if from_checkpoint {
+        // Restore or create fresh filesystem.
+        let fs = if from_checkpoint {
             let cp_path = config.data_dir.join("checkpoint.bin");
             if cp_path.exists() {
                 let data = std::fs::read(&cp_path)?;
-                MemFs::deserialize(&data)?
+                Fs::deserialize(&data)?
             } else {
-                MemFs::new()
+                Fs::new()
             }
         } else {
-            MemFs::new()
+            Fs::new()
         };
 
         // Write PID file.
@@ -111,7 +112,7 @@ impl Daemon {
 
         Ok(Daemon {
             config,
-            vfs: Arc::new(Mutex::new(vfs)),
+            fs: Arc::new(Mutex::new(fs)),
         })
     }
 
@@ -124,11 +125,11 @@ impl Daemon {
         Ok(())
     }
 
-    /// Save a VFS checkpoint atomically.
+    /// Save a filesystem checkpoint atomically.
     pub async fn save_checkpoint(&self) -> Result<(), DaemonError> {
         let data = {
-            let vfs = self.vfs.lock().await;
-            vfs.serialize()
+            let fs = self.fs.lock().await;
+            fs.serialize()
         };
         checkpoint::atomic_write(&self.config.data_dir.join("checkpoint.bin"), &data)?;
         Ok(())
