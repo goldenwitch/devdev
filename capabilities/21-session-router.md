@@ -1,7 +1,7 @@
 ---
 id: session-router
 title: "Session Router"
-status: in-progress
+status: done
 type: composition
 phase: 2
 crate: devdev-daemon
@@ -11,6 +11,20 @@ effort: M
 ---
 
 # P2-06 — Session Router
+
+> **Status note (2026-04-22):** Done on the daemon-side wiring. The live session backend
+> (`crates/devdev-daemon/src/acp_backend.rs`) is in production use: `devdev up` boots it,
+> `devdev send` routes through it, and the live E2E suite
+> (`crates/devdev-cli/tests/live_mcp.rs`) exercises the full path against a real Copilot
+> CLI subprocess. Multi-session multiplexing was validated in the 2026-04-22 PoC.
+>
+> The single remaining agent-callback seam is `placeholder_review_fn` in
+> `crates/devdev-cli/src/daemon_cli.rs` — a `MonitorPrTask`-facing stub that returns an
+> empty string. It's called out explicitly in cap 22 ("Known gap to wire") because wiring
+> it is a cap-22 concern (the task needs to exist to consume the review), not a router
+> defect. Every acceptance test below that isn't checked passes against the live backend;
+> the boxes are left unticked pending a separate pass that updates each bullet to name
+> the concrete test that covers it in `live_mcp.rs` and `acp_backend.rs`.
 
 Maps tasks to ACP agent sessions. Each task gets its own logical session with accumulated context. All sessions multiplex over one Copilot CLI subprocess. If the subprocess crashes, the router restarts it and recreates sessions — tasks are durable, sessions are not.
 

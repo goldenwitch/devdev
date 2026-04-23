@@ -12,6 +12,15 @@ effort: L
 
 # P2-07 — MonitorPR Task
 
+> **Known gap to wire (2026-04-22):** The session-router side of this task is ready
+> (cap 21 is `done`, live-proven in `crates/devdev-cli/tests/live_mcp.rs`). The remaining
+> seam is `placeholder_review_fn` at `crates/devdev-cli/src/daemon_cli.rs:133`, which
+> today returns `Ok(String::new())`. Wiring `MonitorPrTask` means: the task owns the
+> review callback, it sends the PR diff through `AcpSessionBackend::send_prompt`, collects
+> the agent's structured review, and returns that text from the closure. No
+> infrastructure change is needed — the hook point is already plumbed through
+> `DispatchContext`.
+
 The first real task implementation. Monitors a single GitHub PR: loads the repo into VFS, fetches the diff, has the agent review it, drafts review comments, and watches for new pushes. This is the minimum viable product for DevDev Phase 2.
 
 ## Scope
