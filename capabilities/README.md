@@ -105,6 +105,7 @@ P5-03 mcp-tool-injection ◄── P2-06 session-router
 | P5-02 | [scout-router](26-scout-router.md) | §2 — lightweight LLM picks `.devdev/*.md` for the Heavy |
 | P2-10 | [idempotency-ledger](27-idempotency-ledger.md) | §4 — never re-evaluate the same commit/ticket state twice |
 | P5-03 | [mcp-tool-injection](28-mcp-tool-injection.md) | post-PoC — DevDev-specific tools exposed via MCP (the `--allow-all-tools` prod path bypasses ACP hooks; MCP is the replacement surface) |
+| P4-01 | [workspace-repo-setup](29-workspace-repo-setup.md) | Phase 4 — prove `Fs` can host a real git repo, present it through the live FUSE/WinFSP mount, and round-trip it through snapshot/restore |
 
 ## Parallel Work Streams
 
@@ -124,7 +125,7 @@ Live layout as of Phase 4 (2026-04-22):
 
 | Crate | Capabilities | Notes |
 |-------|--------------|-------|
-| `devdev-workspace` | 00, 01, 03, 04, 05, 06, 07, 08, 09, 13, 15, 16, 23 | Phase 3 consolidation: real-FS mount via FUSE/WinFSP, replacing the per-engine crates listed in the historical map below. Phase 4 added the WinFSP driver. |
+| `devdev-workspace` | 00, 01, 03, 04, 05, 06, 07, 08, 09, 13, 15, 16, 23, 29 | Phase 3 consolidation: real-FS mount via FUSE/WinFSP, replacing the per-engine crates listed in the historical map below. Phase 4 added the WinFSP driver and the repo-setup proof (cap 29). |
 | `devdev-acp` | 10, 11, 12 | Survived Phase 3 unchanged \u2014 it's the agent-protocol layer (NDJSON, client, hooks), not part of the sandbox engine. |
 | `devdev-cli` | 13, 14 | `devdev` binary, `evaluate()` pipeline, `up`/`down`/`status`/`send`/`task` subcommands. |
 | `devdev-daemon` | 17, 21 (pending), 27 (pending), 28 (P5-03 pending) | Daemon lifecycle, IPC server, session router (P2-06 pending), idempotency ledger (P2-10 pending), MCP tool server (P5-03 pending). |
