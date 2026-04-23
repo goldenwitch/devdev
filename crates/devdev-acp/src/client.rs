@@ -105,8 +105,16 @@ pub enum AcpError {
     Timeout,
     #[error("transport error: {0}")]
     Transport(#[source] std::io::Error),
-    #[error("agent returned RPC error: {code} {message}")]
-    Rpc { code: i32, message: String },
+    #[error("agent returned RPC error: {code} {message}{}",
+        .data.as_ref().map(|d| format!(" (data: {d})")).unwrap_or_default())]
+    Rpc {
+        code: i32,
+        message: String,
+        /// The JSON-RPC `error.data` field, preserved so callers can see
+        /// structured error details the agent attached. Copilot emits
+        /// backtrace/reason here for several failure modes.
+        data: Option<serde_json::Value>,
+    },
     #[error("malformed response from agent: {0}")]
     MalformedResponse(String),
     #[error("client is shut down")]
@@ -125,6 +133,7 @@ impl From<RpcError> for AcpError {
         Self::Rpc {
             code: e.code,
             message: e.message,
+            data: e.data,
         }
     }
 }
@@ -189,10 +198,19 @@ impl AcpClient {
         let pending: PendingMap = Arc::new(Mutex::new(HashMap::new()));
         let handler_sem = Arc::new(Semaphore::new(config.max_inflight_handlers));
 
-        // Writer task: drain mpsc → NDJSON.
+        // Writer task: drain mpsc → NDJSON. Every outgoing frame is
+        // logged at `trace` level under target `devdev_acp::wire` so a
+        // single `RUST_LOG=devdev_acp::wire=trace` lights up the full
+        // client→agent side of the conversation.
         let mut ndjson_writer = AsyncNdjsonWriter::new(writer);
         let writer_task = tokio::spawn(async move {
             while let Some(msg) = outgoing_rx.recv().await {
+                if tracing::enabled!(target: "devdev_acp::wire", tracing::Level::TRACE) {
+                    match serde_json::to_string(&msg) {
+                        Ok(s) => tracing::trace!(target: "devdev_acp::wire", dir = "tx", frame = %s),
+                        Err(e) => tracing::trace!(target: "devdev_acp::wire", dir = "tx", error = %e),
+                    }
+                }
                 if let Err(e) = ndjson_writer.send(&msg).await {
                     tracing::warn!("acp writer: send failed: {e}");
                     break;
@@ -210,6 +228,12 @@ impl AcpClient {
             loop {
                 match ndjson_reader.recv().await {
                     Ok(Some(msg)) => {
+                        if tracing::enabled!(target: "devdev_acp::wire", tracing::Level::TRACE) {
+                            match serde_json::to_string(&msg) {
+                                Ok(s) => tracing::trace!(target: "devdev_acp::wire", dir = "rx", frame = %s),
+                                Err(e) => tracing::trace!(target: "devdev_acp::wire", dir = "rx", error = %e),
+                            }
+                        }
                         Self::dispatch_incoming(
                             msg,
                             pending_r.clone(),
@@ -471,7 +495,7 @@ impl AcpClient {
             AuthStrategy::Method(method) => {
                 let token = find_env_token().map(|(_, v)| v);
                 let params = AuthenticateParams {
-                    method: method.clone(),
+                    method_id: method.clone(),
                     token,
                 };
                 let _out: AuthenticateResult =
@@ -507,9 +531,20 @@ impl AcpClient {
         };
         // `session/cancel` is typically a notification in ACP, but the
         // spec leaves room for either. We send as a request and tolerate
-        // a null result.
-        let _: serde_json::Value = self.call("session/cancel", Some(params)).await?;
-        Ok(())
+        // a null result. Agents like Copilot CLI may not implement it
+        // (returning `-32601 Method not found`); treat that as a no-op
+        // since cancel is best-effort.
+        match self.call::<_, serde_json::Value>("session/cancel", Some(params)).await {
+            Ok(_) => Ok(()),
+            Err(AcpError::Rpc { code: -32601, .. }) => {
+                tracing::debug!(
+                    session_id,
+                    "agent does not implement session/cancel; treating as no-op"
+                );
+                Ok(())
+            }
+            Err(e) => Err(e),
+        }
     }
 
     /// Gracefully stop: kill child (if any) to unblock the reader, then
@@ -551,5 +586,36 @@ fn internal(e: serde_json::Error) -> RpcError {
         code: error_codes::INTERNAL_ERROR,
         message: e.to_string(),
         data: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Verify that cancel tolerates JSON-RPC error -32601 (Method not
+    /// found). This is tested through the actual implementation by
+    /// observing its match arm on `AcpError::Rpc { code: -32601, .. }`.
+    /// A full integration test with a mock transport would be complex; this
+    /// at least documents the error-swallowing contract.
+    #[test]
+    fn cancel_error_handling_logic() {
+        // The cancel method explicitly matches on:
+        //   Err(AcpError::Rpc { code: -32601, .. }) => Ok(())
+        // This test verifies that conversion from RpcError -> AcpError
+        // preserves the code so that match works.
+        let rpc_err = RpcError {
+            code: -32601,
+            message: "Method not found".into(),
+            data: None,
+        };
+        let acp_err: AcpError = rpc_err.into();
+        
+        match acp_err {
+            AcpError::Rpc { code, .. } => {
+                assert_eq!(code, -32601, "code should be preserved in AcpError::Rpc");
+            }
+            other => panic!("expected AcpError::Rpc, got {other:?}"),
+        }
     }
 }

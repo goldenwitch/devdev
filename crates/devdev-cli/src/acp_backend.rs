@@ -18,13 +18,14 @@ use async_trait::async_trait;
 use devdev_acp::handler::{AcpHandler, HandlerResult};
 use devdev_acp::protocol::{RpcError, error_codes};
 use devdev_acp::types::{
-    CreateTerminalParams, CreateTerminalResult, KillTerminalParams, NewSessionParams,
-    PermissionRequestParams, PermissionResponse, PromptContent, PromptParams, ReadTextFileParams,
-    ReadTextFileResult, ReleaseTerminalParams, SessionUpdate, SessionUpdateParams,
-    TerminalOutputParams, TerminalOutputResult, WaitForExitParams, WaitForExitResult,
-    WriteTextFileParams,
+    CreateTerminalParams, CreateTerminalResult, KillTerminalParams, McpHeader, McpServerConfig,
+    NewSessionParams, PermissionRequestParams, PermissionResponse, PromptContent, PromptParams,
+    ReadTextFileParams, ReadTextFileResult, ReleaseTerminalParams, SessionUpdate,
+    SessionUpdateParams, TerminalOutputParams, TerminalOutputResult, WaitForExitParams,
+    WaitForExitResult, WriteTextFileParams,
 };
 use devdev_acp::{AcpClient, AcpClientConfig, AcpError};
+use devdev_daemon::mcp::McpEndpoint;
 use devdev_daemon::router::{AgentResponse, ResponseChunk, RouterError, SessionBackend};
 use tokio::sync::{Mutex, OnceCell, mpsc};
 
@@ -32,6 +33,7 @@ use tokio::sync::{Mutex, OnceCell, mpsc};
 pub struct AcpSessionBackend {
     program: String,
     args: Vec<String>,
+    mcp_endpoint: Option<McpEndpoint>,
     inner: OnceCell<Inner>,
 }
 
@@ -41,10 +43,11 @@ struct Inner {
 }
 
 impl AcpSessionBackend {
-    pub fn new(program: String, args: Vec<String>) -> Self {
+    pub fn new(program: String, args: Vec<String>, mcp_endpoint: Option<McpEndpoint>) -> Self {
         Self {
             program,
             args,
+            mcp_endpoint,
             inner: OnceCell::new(),
         }
     }
@@ -71,7 +74,7 @@ impl AcpSessionBackend {
                 // authenticated; it returns `{}` in that case. A `NoAuth`
                 // result here means "nothing to do" — treat as success.
                 let methods: Vec<String> =
-                    init.auth_methods.iter().map(|m| m.kind.clone()).collect();
+                    init.auth_methods.iter().map(|m| m.id.clone()).collect();
                 if !methods.is_empty() {
                     match client.authenticate(&methods).await {
                         Ok(_) => {}
@@ -102,7 +105,7 @@ impl SessionBackend for AcpSessionBackend {
             .client
             .new_session(NewSessionParams {
                 cwd: cwd.to_owned(),
-                mcp_servers: vec![],
+                mcp_servers: mcp_servers_for(self.mcp_endpoint.as_ref()),
             })
             .await
             .map_err(acp_to_router)?;
@@ -271,10 +274,31 @@ impl AcpHandler for RouterHandler {
 
     async fn on_session_update(&self, params: SessionUpdateParams) {
         let SessionUpdateParams { session_id, update } = params;
-        let text = match update {
-            SessionUpdate::AgentMessageChunk { content } => content.text,
-            // Thought chunks and tool-call notifications don't belong in
-            // the user-visible response stream. Drop them here; a future
+        let text = match &update {
+            SessionUpdate::AgentMessageChunk { content } => content.text.clone(),
+            SessionUpdate::ToolCall(tc) => {
+                tracing::debug!(
+                    target: "devdev_cli::acp_backend",
+                    tool_call_id = %tc.tool_call_id,
+                    kind = ?tc.kind,
+                    title = %tc.title,
+                    status = ?tc.status,
+                    "agent initiated tool call"
+                );
+                return;
+            }
+            SessionUpdate::ToolCallUpdate(tcu) => {
+                tracing::debug!(
+                    target: "devdev_cli::acp_backend",
+                    tool_call_id = %tcu.tool_call_id,
+                    status = ?tcu.status,
+                    has_output = tcu.output.is_some(),
+                    "agent tool call update"
+                );
+                return;
+            }
+            // Thought chunks and plan updates don't belong in the
+            // user-visible response stream. Drop them here; a future
             // change can widen `ResponseChunk` to carry them through.
             _ => return,
         };
@@ -298,5 +322,53 @@ fn not_supported(method: &str) -> RpcError {
         code: error_codes::METHOD_NOT_FOUND,
         message: format!("{method} not supported by devdev session router backend"),
         data: None,
+    }
+}
+
+/// Build the `mcp_servers` vec for a fresh `session/new`. Factored out so
+/// the wiring is unit-testable without spawning a real subprocess. One
+/// entry (`"devdev"`) is emitted per active local MCP endpoint; the
+/// bearer travels as a header so it never appears in the URL.
+pub(crate) fn mcp_servers_for(endpoint: Option<&McpEndpoint>) -> Vec<McpServerConfig> {
+    match endpoint {
+        Some(ep) => vec![McpServerConfig::Http {
+            name: "devdev".to_string(),
+            url: ep.url.clone(),
+            headers: vec![McpHeader {
+                name: "Authorization".to_string(),
+                value: format!("Bearer {}", ep.bearer),
+            }],
+        }],
+        None => Vec::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mcp_servers_for_none_yields_empty() {
+        assert!(mcp_servers_for(None).is_empty());
+    }
+
+    #[test]
+    fn mcp_servers_for_some_yields_http_entry_with_bearer_header() {
+        let ep = McpEndpoint {
+            url: "http://127.0.0.1:54321/mcp".into(),
+            bearer: "cafebabe".into(),
+        };
+        let servers = mcp_servers_for(Some(&ep));
+        assert_eq!(servers.len(), 1);
+        match &servers[0] {
+            McpServerConfig::Http { name, url, headers } => {
+                assert_eq!(name, "devdev");
+                assert_eq!(url, "http://127.0.0.1:54321/mcp");
+                assert_eq!(headers.len(), 1);
+                assert_eq!(headers[0].name, "Authorization");
+                assert_eq!(headers[0].value, "Bearer cafebabe");
+            }
+            other => panic!("expected Http variant, got {other:?}"),
+        }
     }
 }

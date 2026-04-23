@@ -39,10 +39,10 @@ pub trait TraceLogger: Send + Sync {
     /// Helper: classify and forward a `session/update` notification.
     fn record_session_update(&self, params: &SessionUpdateParams) {
         let kind = match &params.update {
-            SessionUpdate::AgentMessageChunk { .. } => "agentMessageChunk",
-            SessionUpdate::AgentThoughtChunk { .. } => "agentThoughtChunk",
-            SessionUpdate::ToolCall(_) => "toolCall",
-            SessionUpdate::ToolCallUpdate(_) => "toolCallUpdate",
+            SessionUpdate::AgentMessageChunk { .. } => "agent_message_chunk",
+            SessionUpdate::AgentThoughtChunk { .. } => "agent_thought_chunk",
+            SessionUpdate::ToolCall(_) => "tool_call",
+            SessionUpdate::ToolCallUpdate(_) => "tool_call_update",
             SessionUpdate::Plan { .. } => "plan",
         };
         self.record(TraceEvent::SessionUpdate {

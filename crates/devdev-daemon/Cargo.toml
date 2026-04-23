@@ -6,17 +6,23 @@ license.workspace = true
 
 [dependencies]
 async-trait = { workspace = true }
+axum = { workspace = true }
 devdev-integrations = { path = "../devdev-integrations" }
 devdev-tasks = { path = "../devdev-tasks" }
 devdev-workspace = { path = "../devdev-workspace" }
+getrandom = "0.3"
+rmcp = { workspace = true }
+schemars = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
+tokio-util = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
 devdev-integrations = { path = "../devdev-integrations" }
 devdev-tasks = { path = "../devdev-tasks" }
+reqwest = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["full"] }

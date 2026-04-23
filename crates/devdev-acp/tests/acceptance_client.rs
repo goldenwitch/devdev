@@ -186,7 +186,7 @@ async fn initialize_round_trip() {
                 version: "1.0".into(),
             },
             agent_capabilities: AgentCapabilities { streaming: Some(true) },
-            auth_methods: vec![devdev_acp::types::AuthMethod { kind: "api_key".into() }],
+            auth_methods: vec![devdev_acp::types::AuthMethod { id: "api_key".into(), name: None, description: None }],
         })
         .unwrap();
         agent.reply(req.id.clone(), result).await;

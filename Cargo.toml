@@ -41,6 +41,18 @@ clap = { version = "4", features = ["derive"] }
 # HTTP
 reqwest = { version = "0.12", features = ["json"] }
 
+# MCP (Model Context Protocol) — used by devdev-daemon to expose DevDev
+# state to Copilot agents via Streamable HTTP. PoC at target/tmp/poc-mcp-rs/.
+rmcp = { version = "0.9", features = [
+    "server",
+    "macros",
+    "schemars",
+    "transport-streamable-http-server",
+] }
+axum = "0.8"
+tokio-util = "0.7"
+schemars = "1"
+
 # Virtual filesystem drivers (Linux only — cfg-gated in consumers)
 fuser = "0.15"
 libc = "0.2"

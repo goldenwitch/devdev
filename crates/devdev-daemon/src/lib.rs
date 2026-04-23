@@ -7,6 +7,7 @@
 pub mod checkpoint;
 pub mod dispatch;
 pub mod ipc;
+pub mod mcp;
 pub mod pid;
 pub mod router;
 pub mod server;

@@ -28,6 +28,15 @@ enum Command {
 }
 
 fn main() -> ExitCode {
+    // Initialize tracing subscriber once at startup. Respects RUST_LOG;
+    // defaults to info level if not set.
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_target(true)
+        .try_init();
+
     let cli = Cli::parse();
     let rt = match tokio::runtime::Runtime::new() {
         Ok(rt) => rt,

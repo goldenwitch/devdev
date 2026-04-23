@@ -27,6 +27,7 @@ use tokio::sync::{watch, Mutex};
 
 use devdev_daemon::dispatch::DispatchContext;
 use devdev_daemon::ipc::{read_port, IpcClient, IpcServer};
+use devdev_daemon::mcp::{DaemonToolProvider, McpServer};
 use devdev_daemon::router::SessionRouter;
 use devdev_daemon::{server, Daemon, DaemonConfig, DaemonError};
 use devdev_integrations::{GitHubAdapter, LiveGitHubAdapter, MockGitHubAdapter};
@@ -177,12 +178,25 @@ pub async fn run_up(args: UpArgs) -> Result<()> {
         .context("writing daemon.port file")?;
 
     // Dispatch context wiring.
+    // Task registry is built first so the MCP server can wrap it in a
+    // provider and have its URL ready before the ACP backend spawns.
+    let tasks = Arc::new(Mutex::new(TaskRegistry::new()));
+
+    // Start the local MCP server. Loopback-only, bearer-auth'd, stateless.
+    // Dropped below after the IPC accept loop exits.
+    let mcp_provider = Arc::new(DaemonToolProvider::new(Arc::clone(&tasks)));
+    let mcp_server = McpServer::start(mcp_provider)
+        .await
+        .context("starting local MCP server")?;
+    let mcp_endpoint = mcp_server.endpoint().clone();
+    eprintln!("DevDev MCP server listening at {}", mcp_endpoint.url);
+
     let backend = Arc::new(AcpSessionBackend::new(
         args.agent_program.clone(),
         args.agent_arg.clone(),
+        Some(mcp_endpoint),
     ));
     let router = Arc::new(SessionRouter::new(backend));
-    let tasks = Arc::new(Mutex::new(TaskRegistry::new()));
     let github = select_github_adapter(args.github.as_deref());
     let policy = ApprovalPolicy::AutoApprove;
     let (_gate, handle) = approval_channel(policy, APPROVAL_TIMEOUT);
@@ -221,6 +235,10 @@ pub async fn run_up(args: UpArgs) -> Result<()> {
 
     // Let the accept loop observe the flag and exit.
     let _ = server_task.await;
+
+    // Stop the MCP server so its port is released before we claim
+    // shutdown is done. Shutdown is graceful — no pending requests.
+    mcp_server.shutdown().await;
 
     if let Err(e) = daemon.stop().await {
         eprintln!("devdev: error during shutdown: {e}");

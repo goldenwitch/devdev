@@ -58,10 +58,21 @@ pub struct AgentCapabilities {
     pub streaming: Option<bool>,
 }
 
+/// An authentication method advertised by the agent in `InitializeResult`.
+///
+/// Wire shape is `{id, name, description, _meta?}` per the ACP spec
+/// (verified against Copilot CLI 1.0.34 — returns `id: "copilot-login"`).
+/// `name`/`description` are optional because not every agent fills them
+/// in; tolerate-what-you-receive on inbound. `_meta` is agent-defined
+/// side data and intentionally ignored.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthMethod {
-    pub kind: String,
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 }
 
 // ── Authenticate ────────────────────────────────────────────────
@@ -69,7 +80,10 @@ pub struct AuthMethod {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthenticateParams {
-    pub method: String,
+    /// The `id` of the advertised [`AuthMethod`] the client chose.
+    /// Serialized as `methodId` per the ACP spec.
+    #[serde(rename = "methodId")]
+    pub method_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub token: Option<String>,
 }
@@ -77,6 +91,7 @@ pub struct AuthenticateParams {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthenticateResult {
+    #[serde(default)]
     pub success: bool,
 }
 
@@ -169,11 +184,20 @@ pub struct PromptResult {
     pub stop_reason: StopReason,
 }
 
+/// `session/prompt` stop reason.
+///
+/// Serializes as camelCase per the ACP spec, but deserialization also
+/// accepts snake_case — Copilot CLI 1.0.34 emits `end_turn` (snake_case)
+/// for `endTurn`. Aliases keep us tolerant of both forms so we don't
+/// fail a successful turn on cosmetic wire drift.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub enum StopReason {
+    #[serde(alias = "end_turn")]
     EndTurn,
+    #[serde(alias = "max_tokens")]
     MaxTokens,
+    #[serde(alias = "max_turn_requests")]
     MaxTurnRequests,
     Refusal,
     Cancelled,
@@ -385,8 +409,14 @@ pub struct SessionUpdateParams {
     pub update: SessionUpdate,
 }
 
+/// `session/update` payload variants.
+///
+/// Wire shape per ACP spec (and Copilot CLI 1.0.34, empirically):
+/// the discriminator key is `sessionUpdate` and the variant tags are
+/// **snake_case** (`agent_message_chunk`, `tool_call`, …). The rest of
+/// each variant's fields are flattened alongside the discriminator.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(tag = "type", rename_all = "camelCase")]
+#[serde(tag = "sessionUpdate", rename_all = "snake_case")]
 pub enum SessionUpdate {
     #[serde(rename_all = "camelCase")]
     AgentMessageChunk { content: ContentBlock },
