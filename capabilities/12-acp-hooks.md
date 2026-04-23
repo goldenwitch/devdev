@@ -1,7 +1,7 @@
 ---
 id: acp-hooks
 title: "ACP Hook Handlers (Terminal, FS, Permissions)"
-status: done
+status: superseded
 type: composition
 phase: 4
 crate: devdev-acp

@@ -53,8 +53,10 @@ additionally require:
   - Classic PATs are rejected by the CLI.
 - `DEVDEV_E2E=1` in the environment to opt in.
 
-`tools/` already contains `build-tools.{ps1,sh}` for the WASM
-toolchain; no new tooling scripts are added by this capability.
+No new tooling scripts are added by this capability. (The
+`tools/build-tools.{ps1,sh}` WASM build scripts that this section
+originally referenced were removed in the 2026-04-22 Phase 3
+consolidation.)
 
 ## CLI interface
 

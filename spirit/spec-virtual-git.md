@@ -1,6 +1,9 @@
 # Spec: Virtual Git
 
-**Status:** Draft — Updated with research findings (April 2026)
+> **⚠️ HISTORICAL — describes the pre-Phase-3 architecture.** This spec describes an in-memory libgit2 (mempack-backed) git layer that was deleted during the Phase 3 consolidation (2026-04-22). The current implementation invokes the host's real `git` binary inside the FUSE/WinFSP mount via `Workspace::exec`. Retained for design-history context; **do not use as a spec for current or future work.**
+
+**Status:** Historical — superseded by host-`git`-in-mount.
+**Original status:** Draft — Updated with research findings (April 2026)
 **Depends on:** Virtual Filesystem (spec-virtual-filesystem.md)
 
 ---

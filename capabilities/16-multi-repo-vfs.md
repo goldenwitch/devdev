@@ -1,7 +1,7 @@
 ---
 id: multi-repo-vfs
 title: "Multi-Repo VFS Mounts"
-status: done
+status: superseded
 type: leaf
 phase: 2
 crate: devdev-workspace  # originally devdev-vfs; consolidated in Phase 3

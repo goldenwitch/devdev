@@ -1,7 +1,7 @@
 ---
 id: vfs-core
 title: "In-Memory Virtual Filesystem"
-status: done
+status: superseded
 type: leaf
 phase: 1
 crate: devdev-workspace  # originally devdev-vfs; consolidated in Phase 3
@@ -11,6 +11,8 @@ effort: L
 ---
 
 # 00 — In-Memory Virtual Filesystem
+
+> **STATUS: SUPERSEDED (Phase 3 consolidation, 2026-04-22).** This capability shipped as the Phase 1 path-keyed `MemFs` in the deleted `devdev-vfs` crate. Phase 3 replaced it with the inode-centric `devdev_workspace::mem::Fs`, mounted as a real OS filesystem via FUSE/WinFSP. The trait-based API and `BTreeMap<PathBuf, Node>` layout described below are **historical**; the product behaviour (agent reads/writes files against a bounded workspace) still holds. See `crates/devdev-workspace/src/mem.rs`.
 
 The foundational data structure. Every other capability reads from or writes to this. Nothing in the sandbox touches the host filesystem — this is the single source of truth during an evaluation.
 

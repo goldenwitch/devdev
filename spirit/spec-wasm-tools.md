@@ -1,6 +1,9 @@
 # Spec: WASM Tool Execution Engine
 
-**Status:** Draft — Updated with research findings (April 2026)
+> **⚠️ HISTORICAL — describes the pre-Phase-3 architecture.** This spec describes compiling coreutils (`cat`, `ls`, `grep`, `find`, etc.) to `wasm32-wasip1` and running them against an in-memory VFS via wasmtime. That entire path was deleted during the Phase 3 consolidation (2026-04-22); the agent now runs native host binaries inside the FUSE/WinFSP mount. The build scripts under `tools/` were removed. Retained for design-history context; **do not use as a spec for current or future work.**
+
+**Status:** Historical — superseded by native-binary-in-mount.
+**Original status:** Draft — Updated with research findings (April 2026)
 **Depends on:** Virtual Filesystem (spec-virtual-filesystem.md)
 
 ---

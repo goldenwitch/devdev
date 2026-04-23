@@ -25,7 +25,7 @@ portable-pty = { workspace = true }
 tempfile = { workspace = true }
 
 # FUSE is Linux-only. On Windows this dep resolves to nothing and the
-# winfsp driver module takes over (currently a stub).
+# winfsp driver module takes over.
 [target.'cfg(target_os = "linux")'.dependencies]
 fuser = { workspace = true }
 libc = { workspace = true }

@@ -3,8 +3,9 @@
 //! A `VirtualFsDriver` owns a mount: it takes a shared handle to the
 //! in-memory `Fs` (behind a `Mutex`) and presents it at a real host
 //! path using the OS's native filesystem-in-userspace mechanism.
-//! Linux uses FUSE (`fuser` crate). Windows will use WinFSP in a
-//! later phase — currently a stub.
+//! Linux uses FUSE (`fuser` crate); Windows uses hand-rolled WinFSP
+//! FFI (see `winfsp.rs` + `winfsp_sys.rs`). Both paths ship and have
+//! round-trip tests.
 //!
 //! Drivers are single-mount: one driver = one mount point. Drop the
 //! driver to unmount.

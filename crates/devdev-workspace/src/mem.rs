@@ -1,9 +1,10 @@
-//! In-memory inode-centric filesystem — Phase 1 backing store.
+//! In-memory inode-centric filesystem — backing store for the
+//! FUSE/WinFSP driver.
 //!
-//! This is the backing store for the FUSE/WinFSP driver. All operations
-//! are keyed by inode number (`Ino`), not path, because the kernel FS
-//! protocols (FUSE, WinFSP) are inode-centric. A thin path-resolution
-//! layer sits on top for the convenience API exposed via `Workspace`.
+//! All operations are keyed by inode number (`Ino`), not path, because
+//! the kernel FS protocols (FUSE, WinFSP) are inode-centric. A thin
+//! path-resolution layer sits on top for the convenience API exposed
+//! via `Workspace`.
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;

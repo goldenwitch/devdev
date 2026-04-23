@@ -1,6 +1,9 @@
 # Spec: Shell Parser & Pipeline Engine
 
-**Status:** Draft
+> **⚠️ HISTORICAL — describes the pre-Phase-3 architecture.** This spec describes a hand-rolled bash-subset parser that drove the WASM tool engine against the in-memory VFS. Both collaborators (the WASM engine and the in-memory VFS) were deleted during the Phase 3 consolidation (2026-04-22); the agent now uses a real host shell (via `Workspace::exec`) inside the FUSE/WinFSP mount. Retained for design-history context; **do not use as a spec for current or future work.**
+
+**Status:** Historical — superseded by host-shell-in-mount.
+**Original status:** Draft
 **Depends on:** Virtual Filesystem (spec-virtual-filesystem.md), WASM Tool Engine (spec-wasm-tools.md)
 
 ---

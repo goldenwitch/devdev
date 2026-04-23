@@ -8,7 +8,7 @@ Each file in this directory is a **buildable work item** — a self-contained ca
 ---
 id: string              # unique identifier, matches filename
 title: string           # human-readable name
-status: not-started     # not-started | in-progress | complete
+status: not-started     # not-started | in-progress | done | partial | superseded | obsolete
 type: leaf | composition | build
 phase: 1                # implementation phase (1-5)
 crate: devdev-vfs       # target Rust crate (omit for build tasks)
@@ -133,7 +133,6 @@ Live layout as of Phase 4 (2026-04-22):
 | `devdev-integrations` | 20 | GitHub adapter. |
 | `devdev-scenarios` | \u2014 | Test fixtures / scenarios shared across crates. |
 | `tests/` (workspace root) | 24 (pending) | E2E shepherding harness. |
-| *(build infra)* | 02 | `tools/build-tools.{ps1,sh}` \u2014 WASM toolchain (largely vestigial post-Phase-3). |
 
 ### Crate Map (Historical, Pre-Phase-3)
 

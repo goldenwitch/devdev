@@ -5,10 +5,7 @@
 # Local task-runner / tee outputs (cargo check/test/clippy captures)
 *.log
 
-# Compiled WASM tool binaries (produced by tools/build-tools.{sh,ps1})
-/tools/wasm/*.wasm
-
-# Stale wasm-tools target from earlier layout
+# Stale wasm-tools target from earlier layout (pre-Phase-3)
 /wasm-tools/target/
 
 # Scratch / tempfile output

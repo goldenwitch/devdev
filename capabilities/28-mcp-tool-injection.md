@@ -1,7 +1,7 @@
 ---
 id: mcp-tool-injection
 title: "MCP Tool Injection (DevDev-specific tools)"
-status: not-started
+status: done
 type: leaf
 phase: 5
 crate: devdev-daemon

@@ -12,8 +12,13 @@
 //!   is a follow-up; the flag is accepted now so scripts don't break
 //!   later.
 //! * The [`AcpSessionBackend`](crate::acp_backend::AcpSessionBackend)
-//!   is a stub — `devdev send` and `task/add` will fail until a real
-//!   ACP-backed session backend lands. `status` and `shutdown` work.
+//!   is live — `devdev send` spawns `copilot --acp --allow-all-tools`,
+//!   multiplexes sessions, and surfaces agent replies (proven by the
+//!   gated `live_mcp` tests). The remaining stub is
+//!   [`placeholder_review_fn`]: `MonitorPrTask`'s review callback
+//!   returns an empty string, so `task/add monitor_pr` succeeds but
+//!   posts no review text. Wiring it to a per-task router session is
+//!   cap 22's work.
 //! * `ApprovalPolicy::AutoApprove` is hard-wired; approval-gate UX
 //!   arrives with the TUI work.
 

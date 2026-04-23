@@ -1,7 +1,9 @@
 # Phase 2 Spec: The Persistent Sandbox
 
+> **⚠️ PARTIALLY HISTORICAL.** Sections referring to `devdev-vfs`, `devdev-wasm`, `devdev-git`, and `devdev-shell` describe the pre-Phase-3 crate layout; all four crates were consolidated into `devdev-workspace` on 2026-04-22 and the WASM engine-cleanup items in the "known gaps" table were rendered moot by that consolidation. The daemon/IPC/TUI/task/GitHub-adapter sections reflect code that still exists. Treat crate names as historical; treat daemon-shape guidance as current.
+
 **Date:** April 19, 2026
-**Status:** Draft
+**Status:** Draft (partially historical — see banner above)
 **Prerequisite:** Phase 1 postmortem (Postmortem.md)
 
 ---

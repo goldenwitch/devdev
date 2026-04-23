@@ -1,16 +1,18 @@
 ---
 id: engine-cleanup
 title: "Engine Cleanup (Phase 1 Gaps)"
-status: partial
+status: obsolete
 type: leaf
 phase: 2
-crate: devdev-wasm, devdev-git
+crate: devdev-wasm, devdev-git  # both deleted in Phase 3
 priority: P1
 depends-on: []
 effort: M
 ---
 
 # P2-08 — Engine Cleanup (Phase 1 Gaps)
+
+> **STATUS: OBSOLETE (Phase 3 consolidation, 2026-04-22).** This cap targeted two crates — `devdev-wasm` (the WASM coreutils shim registry) and `devdev-git` (the libgit2-over-MemFs wrapper) — that **no longer exist**. Phase 3 deleted both: the agent now runs the host's real `sed`/`awk`/`git` binaries inside the FUSE/WinFSP mount, so the sed-shim, git-log-flag, and git-diff-path-filter gaps enumerated below were rendered moot rather than fixed. `spirit/spec-copilot-integration.md` reconciliation (§E) still applies but has been tracked informally. No follow-up work is planned under this cap ID.
 
 Fix the known gaps from Phase 1 that cause the agent to hit dead ends. These are independent of the daemon architecture and can be built in parallel with the early Phase 2 capabilities.
 

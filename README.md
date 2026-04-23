@@ -16,15 +16,15 @@ DevDev silently monitors your workflows — PRs, tickets, commits — and enforc
 
 ## The Sandbox
 
-The core of DevDev is a fully portable virtual execution environment:
+The core of DevDev is a portable virtual workspace — an in-memory filesystem surfaced as a real OS mount so the agent's native tools work unchanged:
 
-- **In-memory filesystem** — the target repo is loaded into memory. The agent reads, writes, and navigates files without any host disk I/O.
-- **WASM-compiled coreutils** — standard Unix tools (`grep`, `find`, `cat`, `ls`, `sed`, etc.) are compiled to WebAssembly and execute against the virtual filesystem. The agent uses the same bash-like commands it was trained on.
-- **Virtual git** — git operations (`diff`, `log`, `status`, `blame`) run natively against the in-memory repo using a git library, not a real git binary.
-- **Shell parser** — pipes, redirects, globs, and environment variables work as expected. The agent doesn't know it's not in a real shell.
-- **Copilot CLI via ACP** — the AI agent (Copilot CLI) is spawned as a subprocess using the Agent Communication Protocol — a structured JSON-based RPC interface. Tool-use commands are intercepted via protocol hooks and routed through the virtual engine. No PTY hacking, no terminal parsing.
+- **In-memory filesystem, real-OS surface** — a bounded, inode-centric in-memory `Fs` is mounted at a host path via FUSE (Linux) or WinFSP (Windows). All file state lives in DevDev's memory; the kernel just presents it.
+- **Native host tools** — because the workspace is a real mount, the agent runs the host's own `grep`, `find`, `cat`, `ls`, `sed`, `git`, etc. under a curated PTY environment. No re-implementations, no WASM shims.
+- **Copilot CLI via ACP** — the AI agent (Copilot CLI) is spawned as a subprocess using the Agent Communication Protocol — a structured JSON-based RPC over stdio. Prod invocation is `copilot --acp --allow-all-tools`: the CLI runs its tool bundle directly against the mount and DevDev observes work via session updates. DevDev-specific tools (task queries, preference lookups) are surfaced via an injected MCP server; see [capability 28](capabilities/28-mcp-tool-injection.md).
 
-Nothing escapes the sandbox. When the evaluation is done, the entire virtual workspace is dropped. Zero cleanup.
+Nothing outside the mount is visible to the agent. When the workspace is dropped, its memory goes with it — the host filesystem is never touched.
+
+> **Architecture note.** Phases 1–2 built a pure in-memory sandbox with WASM-compiled coreutils, a bash-subset parser, and an in-memory libgit2. Phase 3 (2026-04-22) consolidated those four crates (`devdev-vfs`/`-wasm`/`-git`/`-shell`) into a single `devdev-workspace` crate that delegates tool execution to the host via a FUSE/WinFSP mount. The design specs under `spirit/spec-virtual-*.md` and `spirit/spec-{wasm,shell}-*.md` describe the deleted architecture and are marked historical.
 
 ## Project Structure
 
@@ -47,6 +47,6 @@ Specs cover: virtual filesystem, WASM tool engine, shell parser, virtual git, an
 
 390+ tests passing across the workspace; `cargo clippy --workspace --all-targets -- -D warnings` clean on both OSes.
 
-Remaining: session router (P2-06), PR monitor task (P2-07), full E2E (P2-09), real ACP session backend (stubbed as `NOT_WIRED`).
+Remaining: PR monitor task (P2-07) — infrastructure exists but `MonitorPrTask`'s review callback is a placeholder that returns an empty string; full E2E (P2-09); vibe-check (P5-01), scout-router (P5-02), idempotency-ledger (P2-10). The real ACP session backend is live (proven by gated `live_mcp` tests against Copilot CLI 1.0.34); cap 28 (MCP tool injection) is done.
 
 See [capabilities/](capabilities/) for the work-item graph and [spirit/](spirit/) for architecture specs.

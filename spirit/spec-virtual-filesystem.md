@@ -1,6 +1,9 @@
 # Spec: Virtual Filesystem (VFS)
 
-**Status:** Draft — Updated with research findings (April 2026)
+> **⚠️ HISTORICAL — describes the pre-Phase-3 architecture.** This spec describes the in-memory path-keyed VFS that was deleted during the Phase 3 consolidation (2026-04-22). The current implementation is an inode-centric `Fs` mounted as a real OS filesystem via FUSE (Linux) or WinFSP (Windows); see `crates/devdev-workspace/src/mem.rs` and `src/driver/`. Retained for design-history context; **do not use as a spec for current or future work.**
+
+**Status:** Historical — superseded by the `devdev-workspace` kernel-mount crate.
+**Original status:** Draft — Updated with research findings (April 2026)
 **Depends on:** Nothing — foundational component.
 
 ---
