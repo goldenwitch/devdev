@@ -1,8 +1,11 @@
 [package]
 name = "devdev-workspace"
+description = "Virtual workspace for agents: in-memory POSIX-ish filesystem mounted via FUSE (Linux) or WinFSP (Windows)."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+authors.workspace = true
 publish = false
 
 # The virtual workspace driver. Owns an in-memory POSIX-ish filesystem

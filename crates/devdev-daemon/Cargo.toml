@@ -1,8 +1,12 @@
 [package]
 name = "devdev-daemon"
+description = "DevDev daemon: IPC server, session router, MCP tool surface"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish.workspace = true
 
 [dependencies]
 async-trait = { workspace = true }

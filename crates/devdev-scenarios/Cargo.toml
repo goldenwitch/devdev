@@ -3,6 +3,9 @@ name = "devdev-scenarios"
 description = "User-surface scenario tests for DevDev. Dev-only."
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
 publish = false
 
 # The scenarios crate deliberately depends ONLY on types a real user

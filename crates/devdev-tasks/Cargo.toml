@@ -1,8 +1,12 @@
 [package]
 name = "devdev-tasks"
+description = "Task model and implementations for DevDev (monitor-pr, evaluate, etc.)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish.workspace = true
 
 [dependencies]
 async-trait = { workspace = true }

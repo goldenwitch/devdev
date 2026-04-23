@@ -1,8 +1,12 @@
 [package]
 name = "devdev-tui"
+description = "Terminal UI client for the DevDev daemon"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish.workspace = true
 
 [dependencies]
 devdev-daemon = { path = "../devdev-daemon" }

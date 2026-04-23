@@ -3,6 +3,10 @@ name = "devdev-cli"
 description = "DevDev CLI binary (daemon lifecycle subcommands)"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish.workspace = true
 
 [[bin]]
 name = "devdev"
