@@ -5,7 +5,6 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Instant;
 
 use tokio::sync::{mpsc, Mutex};
 
@@ -69,8 +68,6 @@ struct SessionState {
     session_id: String,
     task_id: String,
     context: SessionContext,
-    #[allow(dead_code)]
-    created_at: Instant,
 }
 
 /// Backend trait for agent communication (mockable for tests).
@@ -141,7 +138,6 @@ impl SessionRouter {
                 session_id: session_id.clone(),
                 task_id: task_id.to_string(),
                 context,
-                created_at: Instant::now(),
             },
         );
 
@@ -212,7 +208,6 @@ impl SessionRouter {
                     session_id: new_session_id,
                     task_id: state.task_id,
                     context: state.context,
-                    created_at: Instant::now(),
                 },
             );
         }

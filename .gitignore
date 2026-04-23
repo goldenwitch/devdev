@@ -4,12 +4,9 @@
 
 # Local task-runner / tee outputs (cargo check/test/clippy captures)
 *.log
-
-# Stale wasm-tools target from earlier layout (pre-Phase-3)
-/wasm-tools/target/
+*.out
 
 # Scratch / tempfile output
-/tests/fixtures/_scratch/
 /tmp/
 /target/tmp/
 
