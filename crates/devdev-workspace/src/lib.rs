@@ -11,7 +11,7 @@
 //!
 //! This crate is the post-Phase-3 consolidation of the original
 //! in-memory sandbox crates (`devdev-vfs`/`-wasm`/`-git`/`-shell`).
-//! See `capabilities/README.md` for the crate-map history.
+//! See `docs/internals/capabilities/README.md` for the crate-map history.
 
 pub mod driver;
 pub mod exec;
