@@ -66,3 +66,18 @@ portable-pty = "0.9"
 # Testing
 tempfile = "3"
 
+# ---------------------------------------------------------------------------
+# Release packaging (cargo-dist). Linux + Windows x86_64 only; no macOS
+# in this pass. Single shippable: the `devdev` binary from devdev-cli.
+# ---------------------------------------------------------------------------
+[workspace.metadata.dist]
+cargo-dist-version = "0.22.1"
+ci = "github"
+installers = []
+targets = ["x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc"]
+pr-run-mode = "plan"
+allow-dirty = ["ci"]
+
+[profile.dist]
+inherits = "release"
+lto = "thin"
