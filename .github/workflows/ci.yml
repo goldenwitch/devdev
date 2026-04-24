@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-Dwarnings"
+  RUST_BACKTRACE: "1"
+
+jobs:
+  fmt:
+    name: fmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain (respects rust-toolchain.toml)
+        run: rustup show active-toolchain || rustup toolchain install
+      - run: cargo fmt --all -- --check
+
+  clippy:
+    name: clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup show active-toolchain || rustup toolchain install
+      - run: rustup component add clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+
+  test-linux:
+    name: test (linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup show active-toolchain || rustup toolchain install
+      - name: Install FUSE
+        run: sudo apt-get update && sudo apt-get install -y fuse3 libfuse3-dev pkg-config
+      - uses: Swatinem/rust-cache@v2
+      - name: Test (skip --ignored)
+        run: cargo test --workspace --locked
+
+  test-windows:
+    name: test (windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - name: Test (skip --ignored; WinFSP not installed in CI)
+        shell: pwsh
+        run: cargo test --workspace --locked
+
+  coverage:
+    name: coverage (non-gating)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup show active-toolchain || rustup toolchain install
+      - run: rustup component add llvm-tools-preview
+      - name: Install FUSE
+        run: sudo apt-get update && sudo apt-get install -y fuse3 libfuse3-dev pkg-config
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+      - name: Run coverage
+        run: cargo llvm-cov --workspace --lcov --output-path lcov.info
+      - name: Summary
+        run: cargo llvm-cov --workspace --summary-only
+      - name: Upload lcov artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lcov
+          path: lcov.info
