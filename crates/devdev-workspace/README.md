@@ -100,11 +100,11 @@ round-trip) work everywhere.
 
 See the DevDev narrative:
 
-* [`spirit/02-workspace-contract.md`](https://github.com/goldenwitch/devdev/blob/master/spirit/02-workspace-contract.md)
+* [`spirit/02-workspace-contract.md`](https://github.com/goldenwitch/devdev/blob/main/spirit/02-workspace-contract.md)
   — full contract, invariants, and serialization format.
-* [`spirit/01-concept.md`](https://github.com/goldenwitch/devdev/blob/master/spirit/01-concept.md)
+* [`spirit/01-concept.md`](https://github.com/goldenwitch/devdev/blob/main/spirit/01-concept.md)
   — why a virtual workspace at all.
 
 ## License
 
-MIT. See [LICENSE](https://github.com/goldenwitch/devdev/blob/master/LICENSE).
+MIT. See [LICENSE](https://github.com/goldenwitch/devdev/blob/main/LICENSE).
