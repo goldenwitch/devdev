@@ -20,7 +20,7 @@ The core of DevDev is a portable virtual workspace — an in-memory filesystem s
 
 - **In-memory filesystem, real-OS surface** — a bounded, inode-centric in-memory `Fs` is mounted at a host path via FUSE (Linux) or WinFSP (Windows). All file state lives in DevDev's memory; the kernel just presents it.
 - **Native host tools** — because the workspace is a real mount, the agent runs the host's own `grep`, `find`, `cat`, `ls`, `sed`, `git`, etc. under a curated PTY environment. No re-implementations, no WASM shims.
-- **Copilot CLI via ACP** — the AI agent (Copilot CLI) is spawned as a subprocess using the Agent Communication Protocol — a structured JSON-based RPC over stdio. Prod invocation is `copilot --acp --allow-all-tools`: the CLI runs its tool bundle directly against the mount and DevDev observes work via session updates. DevDev-specific tools (task queries, preference lookups) are surfaced via an injected MCP server; see [capability 28](capabilities/28-mcp-tool-injection.md).
+- **Copilot CLI via ACP** — the AI agent (Copilot CLI) is spawned as a subprocess using the Agent Communication Protocol — a structured JSON-based RPC over stdio. Prod invocation is `copilot --acp --allow-all-tools`: the CLI runs its tool bundle directly against the mount and DevDev observes work via session updates. DevDev-specific tools (task queries, preference lookups) are surfaced via an injected MCP server; see [capability 28](docs/internals/capabilities/28-mcp-tool-injection.md).
 
 Nothing outside the mount is visible to the agent. When the workspace is dropped, its memory goes with it — the host filesystem is never touched.
 

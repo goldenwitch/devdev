@@ -3,7 +3,7 @@
 **What these are.** Each `S*.md` file here is a user-surface scenario —
 a thing a person installing the `devdev` binary expects to be able to
 do. Every scenario is paired 1:1 with a `#[tokio::test]` of the same
-name in [../../crates/devdev-scenarios/tests/scenarios.rs](../../crates/devdev-scenarios/tests/scenarios.rs);
+name in [../tests/scenarios.rs](../tests/scenarios.rs);
 an integrity meta-test fails the build if that pairing ever drifts.
 
 **The contract.** Scenarios may drive DevDev **only** through surfaces

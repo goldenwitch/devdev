@@ -4,7 +4,7 @@
 //! DevDev through the same surfaces a real user hits: the `devdev`
 //! binary, the IPC protocol, checkpoint files on disk, and
 //! environment variables. See
-//! [`spirit/scenarios/README.md`](../../../spirit/scenarios/README.md)
+//! [`catalog/README.md`](../catalog/README.md)
 //! for the full charter.
 
 use std::collections::{BTreeMap, BTreeSet};

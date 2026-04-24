@@ -138,7 +138,7 @@ DevDev sends evaluation context to the Copilot CLI through ACP session managemen
    - **`GH_TOKEN` / `GITHUB_TOKEN` environment variable** — either a fine-grained PAT with Copilot scope, or a gh-CLI OAuth token (e.g. `GH_TOKEN=$(gh auth token)`).
    - **Device code flow (RFC 8628)** — interactive fallback for first-time setup on a fresh machine.
 3. **Prime:** Create a session via `session/new`. Send evaluation context as the initial prompt.
-4. **Loop:** On `--allow-all-tools`, Copilot runs its own tools (shell, fs, web) directly against the mounted workspace; DevDev observes progress via `session/update` notifications and surfaces text chunks as responses. (Under a hypothetical `--strict-sandbox` mode — no `--allow-all-tools` — tool calls instead route back via ACP `terminal/*` + `fs/*` client capabilities; see [capability 12](../capabilities/12-acp-hooks.md).)
+4. **Loop:** On `--allow-all-tools`, Copilot runs its own tools (shell, fs, web) directly against the mounted workspace; DevDev observes progress via `session/update` notifications and surfaces text chunks as responses. (Under a hypothetical `--strict-sandbox` mode — no `--allow-all-tools` — tool calls instead route back via ACP `terminal/*` + `fs/*` client capabilities; see [capability 12](capabilities/12-acp-hooks.md).)
 5. **Collect:** Assemble `agent_message_chunk` text across the turn; terminate on `stopReason: endTurn`.
 6. **Teardown:** End the session. Kill the subprocess. Drop the VFS.
 
@@ -213,7 +213,7 @@ See `spirit/research-acp.md` for full protocol details.
 ## Open Questions
 
 1. **CLI version pinning:** Should DevDev bundle or pin to a specific Copilot CLI version? Recommendation: pin to tested version, document minimum. (PoC validated against 1.0.34.)
-2. ~~**Terminal delegation verification:** Does Copilot CLI actually use `terminal/create` when the client advertises terminal capability, or does it still execute internally?~~ ✅ **Resolved (2026-04-22, P2-06 PoC):** When launched with `--allow-all-tools`, Copilot runs its own internal tool bundle directly against the mounted workspace and does *not* route through ACP `terminal/create`. The ACP client capabilities path (see [capability 12](../capabilities/12-acp-hooks.md)) only engages under a `--strict-sandbox` profile that is not currently used. DevDev-specific tools should be exposed via MCP ([capability 28](../capabilities/28-mcp-tool-injection.md)) instead.
+2. ~~**Terminal delegation verification:** Does Copilot CLI actually use `terminal/create` when the client advertises terminal capability, or does it still execute internally?~~ ✅ **Resolved (2026-04-22, P2-06 PoC):** When launched with `--allow-all-tools`, Copilot runs its own internal tool bundle directly against the mounted workspace and does *not* route through ACP `terminal/create`. The ACP client capabilities path (see [capability 12](capabilities/12-acp-hooks.md)) only engages under a `--strict-sandbox` profile that is not currently used. DevDev-specific tools should be exposed via MCP ([capability 28](capabilities/28-mcp-tool-injection.md)) instead.
 3. **Context window management:** How much context can we inject in the initial prompt? The CLI has auto-compaction at 95% token usage — does it handle large PR diffs gracefully?
 ---
 

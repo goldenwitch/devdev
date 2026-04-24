@@ -7,7 +7,7 @@
 //! `HashMap<session_id, mpsc::Sender<ResponseChunk>>` owned by the
 //! handler.
 //!
-//! See `capabilities/21-session-router.md` for the PoC result that
+//! See `docs/internals/capabilities/21-session-router.md` for the PoC result that
 //! validated one-subprocess-multiplex; this file implements that
 //! decision.
 

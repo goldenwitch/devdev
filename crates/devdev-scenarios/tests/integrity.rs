@@ -1,5 +1,5 @@
-//! Catalog integrity: every `spirit/scenarios/S*.md` pairs 1:1 with
-//! a `#[tokio::test]` of the matching name in `scenarios.rs`.
+//! Catalog integrity: every `crates/devdev-scenarios/catalog/S*.md` pairs
+//! 1:1 with a `#[tokio::test]` of the matching name in `scenarios.rs`.
 //!
 //! This guards against the two silent drift modes: orphan markdown
 //! files that no test exercises, and tests that claim to implement
@@ -15,7 +15,10 @@ use devdev_scenarios::workspace_root;
 
 /// IDs declared by markdown catalog files.
 fn markdown_ids() -> BTreeSet<String> {
-    let dir = workspace_root().join("spirit").join("scenarios");
+    let dir = workspace_root()
+        .join("crates")
+        .join("devdev-scenarios")
+        .join("catalog");
     let mut ids = BTreeSet::new();
     for entry in fs::read_dir(&dir).expect("read scenarios dir") {
         let entry = entry.expect("dir entry");

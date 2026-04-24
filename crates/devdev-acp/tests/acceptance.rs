@@ -1,6 +1,6 @@
 //! Acceptance tests for Cap 10 — ACP Protocol Types & Serialization.
 //!
-//! Each test maps to one acceptance criterion from capabilities/10-acp-protocol.md.
+//! Each test maps to one acceptance criterion from docs/internals/capabilities/10-acp-protocol.md.
 
 use std::io::Cursor;
 

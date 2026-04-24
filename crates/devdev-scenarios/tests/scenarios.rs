@@ -1,5 +1,5 @@
 //! User-surface scenarios for DevDev. Each `#[tokio::test]` here
-//! pairs 1:1 with a Markdown file in `spirit/scenarios/` of the same
+//! pairs 1:1 with a Markdown file in `../catalog/` of the same
 //! ID. The pairing is enforced by `integrity.rs`.
 //!
 //! Scenarios spawn the real `devdev` binary via the
@@ -64,7 +64,7 @@ fn assert_confined(outer: &Path, data_dir: &Path, before: &DirSnapshot, after: &
 // ── S01 ─────────────────────────────────────────────────────────
 
 /// S01 — Empty workspace up and down.
-/// See: spirit/scenarios/S01-empty-workspace-up-and-down.md
+/// See: crates/devdev-scenarios/catalog/S01-empty-workspace-up-and-down.md
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn s01_empty_workspace_up_and_down() {
     let scratch = Scratch::new();
@@ -122,7 +122,7 @@ async fn s01_empty_workspace_up_and_down() {
 // ── S05 ─────────────────────────────────────────────────────────
 
 /// S05 — Teardown leaves nothing.
-/// See: spirit/scenarios/S05-teardown-leaves-nothing.md
+/// See: crates/devdev-scenarios/catalog/S05-teardown-leaves-nothing.md
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn s05_teardown_leaves_nothing() {
     let scratch = Scratch::new();
@@ -154,7 +154,7 @@ async fn s05_teardown_leaves_nothing() {
 // ── S06 ─────────────────────────────────────────────────────────
 
 /// S06 — Checkpoint round-trip.
-/// See: spirit/scenarios/S06-checkpoint-round-trip.md
+/// See: crates/devdev-scenarios/catalog/S06-checkpoint-round-trip.md
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn s06_checkpoint_round_trip() {
     let scratch = Scratch::new();
