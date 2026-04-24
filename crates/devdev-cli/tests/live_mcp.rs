@@ -263,7 +263,10 @@ async fn live_copilot_sees_registry_tasks() {
             status: TaskStatus::Polling,
         }));
     }
-    let provider = Arc::new(DaemonToolProvider::new(Arc::clone(&registry)));
+    let provider = Arc::new(DaemonToolProvider::new(
+        Arc::clone(&registry),
+        Arc::new(Mutex::new(devdev_workspace::Fs::new())),
+    ));
 
     let server = McpServer::start(provider).await.expect("mcp server start");
     let endpoint = server.endpoint().clone();

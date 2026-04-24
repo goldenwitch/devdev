@@ -9,23 +9,27 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use devdev_tasks::registry::TaskRegistry;
+use devdev_workspace::Fs;
 use tokio::sync::Mutex;
 
 use crate::mcp::{McpProviderError, McpToolProvider, TaskInfo};
 
-/// Wraps the daemon's shared `Arc<Mutex<TaskRegistry>>` so the MCP
-/// server can surface task state. Additional providers (ledger, prefs)
-/// will be folded into this struct as capabilities 27 and workspace
-/// prefs land — keeping a single concrete type simplifies the boot
-/// wiring in `run_up`.
+/// Wraps the daemon's shared `Arc<Mutex<TaskRegistry>>` and
+/// `Arc<Mutex<Fs>>` so the MCP server can both surface task state and
+/// mutate the workspace filesystem on the agent's behalf.
+///
+/// Additional providers (ledger, prefs) will be folded into this
+/// struct as capabilities 27 and workspace prefs land — keeping a
+/// single concrete type simplifies the boot wiring in `run_up`.
 #[derive(Clone)]
 pub struct DaemonToolProvider {
     tasks: Arc<Mutex<TaskRegistry>>,
+    fs: Arc<Mutex<Fs>>,
 }
 
 impl DaemonToolProvider {
-    pub fn new(tasks: Arc<Mutex<TaskRegistry>>) -> Self {
-        Self { tasks }
+    pub fn new(tasks: Arc<Mutex<TaskRegistry>>, fs: Arc<Mutex<Fs>>) -> Self {
+        Self { tasks, fs }
     }
 }
 
@@ -44,6 +48,30 @@ impl McpToolProvider for DaemonToolProvider {
             })
             .collect();
         Ok(out)
+    }
+
+    async fn fs_write(
+        &self,
+        path: String,
+        content: String,
+    ) -> Result<(), McpProviderError> {
+        if !path.starts_with('/') {
+            return Err(McpProviderError::Other(format!(
+                "path must be absolute (start with '/'): {path}"
+            )));
+        }
+        let mut fs = self.fs.lock().await;
+        // Create parent dirs so the agent doesn't have to mkdir first.
+        if let Some(parent_end) = path.rfind('/') {
+            let parent = &path[..parent_end];
+            if !parent.is_empty() {
+                fs.mkdir_p(parent.as_bytes(), 0o755)
+                    .map_err(|e| McpProviderError::Other(format!("mkdir_p {parent}: {e:?}")))?;
+            }
+        }
+        fs.write_path(path.as_bytes(), content.as_bytes())
+            .map_err(|e| McpProviderError::Other(format!("write_path {path}: {e:?}")))?;
+        Ok(())
     }
 }
 
@@ -106,7 +134,10 @@ mod tests {
             status: TaskStatus::Idle,
         }));
 
-        let provider = DaemonToolProvider::new(Arc::new(Mutex::new(reg)));
+        let provider = DaemonToolProvider::new(
+            Arc::new(Mutex::new(reg)),
+            Arc::new(Mutex::new(devdev_workspace::Fs::new())),
+        );
         let mut tasks = provider.tasks_list().await.expect("list");
         tasks.sort_by(|a, b| a.id.cmp(&b.id));
 
@@ -121,7 +152,10 @@ mod tests {
 
     #[tokio::test]
     async fn tasks_list_empty_registry_returns_empty_vec() {
-        let provider = DaemonToolProvider::new(Arc::new(Mutex::new(TaskRegistry::new())));
+        let provider = DaemonToolProvider::new(
+            Arc::new(Mutex::new(TaskRegistry::new())),
+            Arc::new(Mutex::new(devdev_workspace::Fs::new())),
+        );
         let tasks = provider.tasks_list().await.expect("list");
         assert!(tasks.is_empty());
     }

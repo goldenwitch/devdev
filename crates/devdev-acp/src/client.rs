@@ -75,6 +75,12 @@ pub struct AcpClientConfig {
     /// Maximum number of concurrently running agent-initiated request
     /// handlers.
     pub max_inflight_handlers: usize,
+    /// Extra environment variables to set on the spawned subprocess,
+    /// *in addition to* the parent's env. Most callers leave this empty;
+    /// it exists so callers can inject `NODE_OPTIONS` to work around
+    /// known libuv/WinFSP `realpath` quirks on Windows (see
+    /// `devdev-cli/src/realpath_shim.rs`).
+    pub env_overrides: Vec<(String, String)>,
 }
 
 impl Default for AcpClientConfig {
@@ -87,6 +93,7 @@ impl Default for AcpClientConfig {
             protocol_version: 1,
             max_pending: DEFAULT_MAX_PENDING,
             max_inflight_handlers: DEFAULT_MAX_INFLIGHT_HANDLERS,
+            env_overrides: Vec::new(),
         }
     }
 }
@@ -174,6 +181,9 @@ impl AcpClient {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
+        for (k, v) in &config.env_overrides {
+            cmd.env(k, v);
+        }
         let mut child = cmd.spawn().map_err(AcpError::Spawn)?;
         let stdin = child.stdin.take().ok_or(AcpError::BrokenPipe)?;
         let stdout = child.stdout.take().ok_or(AcpError::BrokenPipe)?;

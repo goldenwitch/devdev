@@ -5,10 +5,6 @@ used standalone, without the rest of DevDev. A caller that only wants
 *a place to drop files and run processes* should find everything they
 need here.
 
-Implementation lives in the `devdev-workspace` crate. This document
-intentionally does not talk about module or type names; it talks
-about the contract the crate implements.
-
 ## Three collaborators
 
 The workspace layer is three things working together:

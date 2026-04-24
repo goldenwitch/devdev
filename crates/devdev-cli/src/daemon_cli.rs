@@ -189,7 +189,12 @@ pub async fn run_up(args: UpArgs) -> Result<()> {
 
     // Start the local MCP server. Loopback-only, bearer-auth'd, stateless.
     // Dropped below after the IPC accept loop exits.
-    let mcp_provider = Arc::new(DaemonToolProvider::new(Arc::clone(&tasks)));
+    //
+    // Both the MCP provider and the dispatch context share the
+    // daemon's `Arc<Mutex<Fs>>` so an agent-driven `devdev_fs_write`
+    // and a user-driven `fs/read` IPC call observe the same bytes.
+    let fs = Arc::clone(&daemon.fs);
+    let mcp_provider = Arc::new(DaemonToolProvider::new(Arc::clone(&tasks), Arc::clone(&fs)));
     let mcp_server = McpServer::start(mcp_provider)
         .await
         .context("starting local MCP server")?;
@@ -218,6 +223,7 @@ pub async fn run_up(args: UpArgs) -> Result<()> {
         review_fn,
         policy,
         shutdown_tx.clone(),
+        fs,
     ));
 
     let server_task = tokio::spawn(server::run(Arc::clone(&ctx), server, shutdown_rx));

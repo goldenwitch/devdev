@@ -29,6 +29,7 @@ tracing-subscriber = { workspace = true }
 
 [dev-dependencies]
 async-trait = { workspace = true }
+devdev-workspace = { path = "../devdev-workspace" }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 tracing-subscriber = { workspace = true }

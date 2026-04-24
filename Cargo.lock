@@ -390,6 +390,7 @@ dependencies = [
  "devdev-daemon",
  "devdev-integrations",
  "devdev-tasks",
+ "devdev-workspace",
  "serde",
  "serde_json",
  "tempfile",

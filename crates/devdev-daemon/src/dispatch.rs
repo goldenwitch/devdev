@@ -10,6 +10,7 @@ use devdev_integrations::GitHubAdapter;
 use devdev_tasks::approval::{ApprovalHandle, ApprovalPolicy, ApprovalResponse};
 use devdev_tasks::monitor_pr::{MonitorPrTask, ReviewFn};
 use devdev_tasks::registry::TaskRegistry;
+use devdev_workspace::Fs;
 
 
 use crate::ipc::{IpcRequest, IpcResponse};
@@ -25,6 +26,9 @@ pub struct DispatchContext {
     pub approval_policy: ApprovalPolicy,
     pub approval_timeout: Duration,
     pub shutdown_tx: watch::Sender<bool>,
+    /// Workspace filesystem, shared with the MCP provider so `fs/read`
+    /// IPC calls observe the same bytes the agent wrote via MCP tools.
+    pub fs: Arc<Mutex<Fs>>,
     interactive: Mutex<Option<SessionHandle>>,
     /// Log entries per task (task_id → messages).
     task_logs: Mutex<std::collections::HashMap<String, Vec<String>>>,
@@ -39,6 +43,7 @@ impl DispatchContext {
         review_fn: ReviewFn,
         approval_policy: ApprovalPolicy,
         shutdown_tx: watch::Sender<bool>,
+        fs: Arc<Mutex<Fs>>,
     ) -> Self {
         Self {
             router,
@@ -49,6 +54,7 @@ impl DispatchContext {
             approval_policy,
             approval_timeout: Duration::from_secs(300),
             shutdown_tx,
+            fs,
             interactive: Mutex::new(None),
             task_logs: Mutex::new(std::collections::HashMap::new()),
         }
@@ -69,7 +75,38 @@ impl DispatchContext {
             "status" => self.handle_status(req).await,
             "shutdown" => self.handle_shutdown(req).await,
             "approval_response" => self.handle_approval(req).await,
+            "fs/read" => self.handle_fs_read(req).await,
             _ => IpcResponse::err(req.id, -32601, format!("unknown method: {}", req.method)),
+        }
+    }
+
+    /// "fs/read" — return the UTF-8 contents of an absolute VFS path.
+    ///
+    /// The test-and-introspection counterpart of the `devdev_fs_write`
+    /// MCP tool. Lets users (and claim tests) observe daemon-owned Fs
+    /// state through the same IPC surface they use for everything else.
+    async fn handle_fs_read(&self, req: IpcRequest) -> IpcResponse {
+        let path = match req.params["path"].as_str() {
+            Some(p) => p.to_string(),
+            None => return IpcResponse::err(req.id, -32602, "missing params.path"),
+        };
+        if !path.starts_with('/') {
+            return IpcResponse::err(
+                req.id,
+                -32602,
+                format!("path must be absolute (start with '/'): {path}"),
+            );
+        }
+        let bytes = {
+            let fs = self.fs.lock().await;
+            match fs.read_path(path.as_bytes()) {
+                Ok(b) => b,
+                Err(e) => return IpcResponse::err(req.id, -1, format!("read_path {path}: {e:?}")),
+            }
+        };
+        match String::from_utf8(bytes) {
+            Ok(s) => IpcResponse::ok(req.id, json!({ "content": s })),
+            Err(e) => IpcResponse::err(req.id, -1, format!("non-UTF-8 bytes at {path}: {e}")),
         }
     }
 

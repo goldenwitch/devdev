@@ -191,6 +191,7 @@ impl E2EHarness {
             review_fn,
             policy,
             shutdown_tx.clone(),
+            Arc::new(Mutex::new(devdev_workspace::Fs::new())),
         ).with_approval_timeout(Duration::from_secs(2)));
 
         let server = IpcServer::bind().await.unwrap();

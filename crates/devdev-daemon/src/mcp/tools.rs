@@ -55,6 +55,24 @@ pub struct TaskInfo {
 #[async_trait]
 pub trait McpToolProvider: Send + Sync {
     async fn tasks_list(&self) -> Result<Vec<TaskInfo>, McpProviderError>;
+
+    /// Write `content` (UTF-8 bytes) to `path` in the DevDev workspace,
+    /// creating the file (and any missing parent directories) if needed
+    /// and truncating it if present.
+    ///
+    /// Providers backed by a real `Fs` mutate daemon state; the default
+    /// implementation returns an error so `StaticProvider` and other
+    /// read-only providers fail loudly rather than silently dropping
+    /// writes.
+    async fn fs_write(
+        &self,
+        _path: String,
+        _content: String,
+    ) -> Result<(), McpProviderError> {
+        Err(McpProviderError::Other(
+            "fs_write not supported by this provider".into(),
+        ))
+    }
 }
 
 /// Fixed-data provider used by tests and documentation examples.
@@ -68,6 +86,7 @@ impl McpToolProvider for StaticProvider {
     async fn tasks_list(&self) -> Result<Vec<TaskInfo>, McpProviderError> {
         Ok(self.tasks.clone())
     }
+    // fs_write uses the trait default: NotSupported.
 }
 
 // ── rmcp handler ──────────────────────────────────────────────────
@@ -106,6 +125,38 @@ impl DevDevMcpHandler {
         let text = serde_json::to_string_pretty(&tasks).unwrap();
         Ok(CallToolResult::success(vec![Content::text(text)]))
     }
+
+    #[tool(
+        description = "Write UTF-8 text to a file in the DevDev workspace \
+         filesystem. `path` is an absolute VFS path (e.g. `/notes/hello.txt`); \
+         missing parent directories are created automatically. An existing \
+         file is truncated. Use this to create or overwrite files when the \
+         user asks you to write into the DevDev workspace."
+    )]
+    async fn devdev_fs_write(
+        &self,
+        rmcp::handler::server::wrapper::Parameters(args): rmcp::handler::server::wrapper::Parameters<
+            FsWriteArgs,
+        >,
+    ) -> Result<CallToolResult, McpError> {
+        self.provider
+            .fs_write(args.path.clone(), args.content)
+            .await
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        Ok(CallToolResult::success(vec![Content::text(format!(
+            "wrote {}",
+            args.path
+        ))]))
+    }
+}
+
+/// Arguments for the `devdev_fs_write` MCP tool.
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct FsWriteArgs {
+    /// Absolute VFS path (must start with `/`).
+    pub path: String,
+    /// UTF-8 content to write. File is truncated and overwritten.
+    pub content: String,
 }
 
 #[tool_handler]

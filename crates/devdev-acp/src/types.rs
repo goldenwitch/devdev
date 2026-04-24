@@ -101,7 +101,7 @@ pub struct AuthenticateResult {
 #[serde(rename_all = "camelCase")]
 pub struct NewSessionParams {
     pub cwd: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub mcp_servers: Vec<McpServerConfig>,
 }
 

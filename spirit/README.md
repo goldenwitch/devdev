@@ -30,6 +30,11 @@ library-only entry into the workspace layer, see
    agent loop: how external events become durable, resumable work
    units, and how MonitorPR exemplifies the shape.
 
+5. **[05-validation.md](05-validation.md)** — the rubric we hold
+   validation code against: no tautologies, no off-path stubs, no
+   motte-and-bailey tests. Read before writing a test that claims
+   to prove a README bullet.
+
 ## What these docs are not
 
 - They are **not a roadmap**. See [`ROADMAP.md`](../ROADMAP.md) for

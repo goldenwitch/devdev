@@ -2,3 +2,4 @@
 
 pub mod acp_backend;
 pub mod daemon_cli;
+pub mod realpath_shim;

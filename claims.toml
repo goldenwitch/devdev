@@ -1,0 +1,58 @@
+# Skeptic-facing claims manifest.
+#
+# Each [[claim]] ties a public DevDev claim (from README, ROADMAP, or
+# spirit/) to the single test command that proves it. Rows obey the
+# rubric in spirit/05-validation.md: real path, DevDev-specific
+# failure mode, assertion matches the advertised claim.
+#
+# Runner: scripts/validate.sh (bash) / scripts/validate.ps1 (pwsh).
+
+[[claim]]
+id = "AGENT-FS-WRITE"
+source = "README.md"
+line = 3
+text = """
+The agent host drives a real Copilot CLI session whose cwd is a
+mounted DevDev workspace, and tool calls the agent makes update
+that workspace's in-memory Fs. Proven end-to-end: the probe file
+the agent writes is read back via BOTH the host mount path AND the
+Fs directly, and the two views must agree byte-for-byte.
+
+Scope of this claim:
+  - Low-level stack (Workspace + AcpSessionBackend + live Copilot).
+  - NOT the daemon-integrated path; `devdev up` does not mount Fs
+    today and the router hardcodes cwd='/'. Tracked separately.
+"""
+test = "cargo test -p devdev-cli --test live_workspace_cwd -- --ignored copilot_accepts_mount_root_as_cwd"
+requires_env = ["DEVDEV_LIVE_COPILOT=1"]
+requires_host = ["copilot on PATH, signed in", "WinFSP installed (Windows)"]
+
+[[claim]]
+id = "DAEMON-AGENT-FS-WRITE"
+source = "spirit/01-concept.md"
+line = 1
+text = """
+DevDev can inject arbitrary tools into the agent's tool list, and a
+running `devdev` daemon, driven through its normal IPC surface, will
+route the agent through those tools to mutate daemon-owned state.
+Proven end-to-end: `run_up` boots a real daemon; a user-issued
+`send` prompt over IPC reaches a live `copilot --acp` subprocess;
+the agent invokes our injected `devdev_fs_write` MCP tool with a
+per-run nonce; the nonce lands in the daemon's in-memory Fs; a
+follow-up `fs/read` IPC call reads the exact bytes back.
+
+This is the containment claim. Every future policy hook, audit
+ledger, virtual-git substitution, or egress gate depends on the
+agent preferring our injected primitives over its stock ones when
+we ask it to. Complementary to AGENT-FS-WRITE (which proves the
+mount is real); this one proves the tool list is ours.
+
+Scope of this claim:
+  - The daemon-integrated path (`devdev up` + IPC + MCP + Fs).
+  - Does NOT prove the Fs is mounted as a host filesystem.
+  - Does NOT prove tool descriptions generalise to every model;
+    the test prompt explicitly names `devdev_fs_write`.
+"""
+test = "cargo test -p devdev-cli --test live_daemon_fs_write -- --ignored devdev_up_agent_fs_write_lands_in_daemon_fs"
+requires_env = ["DEVDEV_LIVE_COPILOT=1"]
+requires_host = ["copilot on PATH, signed in"]

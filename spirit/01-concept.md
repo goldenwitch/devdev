@@ -142,9 +142,7 @@ If everything in this document works, a developer can:
 - Point it at sources of events: a GitHub repo, a Jira board, a
   folder of tickets.
 - Let it run. When something interesting happens it opens a
-  workspace, materialises the relevant code, drives the agent
-  against it, and surfaces the output as a draft (a PR review, a
-  comment, a plan) for the developer to approve.
+  workspace, surfaces an agent in that workspace, and lets the agent build a solution with the tools available.
 
 That's the product on the inner circle.
 

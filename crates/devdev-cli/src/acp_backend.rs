@@ -59,12 +59,28 @@ impl AcpSessionBackend {
         self.inner
             .get_or_try_init(|| async {
                 let handler = Arc::new(RouterHandler::default());
-                let argv: Vec<&str> = self.args.iter().map(String::as_str).collect();
+                // On Windows, Copilot's `copilot(.cmd|.exe)` launcher
+                // spawns a Node SEA that ignores `NODE_OPTIONS=--require`,
+                // so our WinFSP realpath shim never reaches the agent.
+                // Rewrite to `node <copilot>/index.js ...` so the shim
+                // applies. Leaves other agents and non-Windows hosts
+                // untouched.
+                let (program, args): (String, Vec<String>) =
+                    match crate::realpath_shim::rewrite_copilot_invocation(
+                        &self.program,
+                        &self.args,
+                    ) {
+                        Some(pair) => pair,
+                        None => (self.program.clone(), self.args.clone()),
+                    };
+                let argv: Vec<&str> = args.iter().map(String::as_str).collect();
+                let mut client_config = AcpClientConfig::default();
+                client_config.env_overrides = crate::realpath_shim::prepare_nodejs_options();
                 let client = AcpClient::connect_process(
-                    &self.program,
+                    &program,
                     &argv,
                     handler.clone() as Arc<dyn AcpHandler>,
-                    AcpClientConfig::default(),
+                    client_config,
                 )
                 .await
                 .map_err(acp_to_router)?;
