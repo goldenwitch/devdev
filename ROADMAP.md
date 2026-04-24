@@ -44,7 +44,6 @@ Works end-to-end and is exercised by tests on every push.
 | S01 empty workspace up/down | ready |
 | S05 teardown leaves nothing | ready |
 | S06 checkpoint round-trip | ready |
-| S02 load local repo into workspace | draft (needs repo-load IPC) |
 | S03 agent uses the toolbelt | blocked (session backend) |
 | S04 event arrives mid-session | blocked (session backend) |
 
@@ -59,11 +58,21 @@ What we're actively working on to close the DevDev-hosting loop.
   of one-size-fits-all.
 - **Idempotency ledger.** Durable record of work already done so an
   agent restart doesn't re-do the same thing.
-- **Repo-load IPC (S02).** `devdev` command to clone/attach a real
-  git repo into the virtual workspace.
 - **Full ACP session backend (S03/S04).** Enough plumbing that the
   agent's tool calls and mid-session events are observable from the
   scenario surface.
+
+### Explicitly not on this list
+
+- **A `devdev repo` command or `--repo` flag.** The workspace is
+  repo-unaware by design and stays that way. When a task needs a
+  repo inside a workspace, the agent materialises it by running
+  `git clone` through the workspace's process launcher — the same
+  surface a human would use. See
+  [`spirit/02-workspace-contract.md`](spirit/02-workspace-contract.md)
+  on what the workspace is unaware of, and
+  [`spirit/04-tasks.md`](spirit/04-tasks.md) for how task-layer
+  context (repo refs, PR numbers) reaches the agent.
 
 ## Aspirational
 

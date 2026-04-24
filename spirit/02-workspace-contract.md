@@ -24,6 +24,31 @@ The three are separable. You can drive the filesystem without
 mounting. You can mount without launching anything. But the typical
 loop uses all three.
 
+## What the workspace is unaware of
+
+The workspace is a pure substrate. It has no vocabulary for —
+and will not grow commands, arguments, or APIs for — any of:
+
+- **Repositories.** The workspace does not know what a git repo is.
+  It will never grow a "load repo" or "clone repo" operation. A
+  caller that wants a repo materialised inside the workspace either
+  writes bytes into the filesystem directly or runs `git clone`
+  through the process launcher. Both paths are already covered by
+  the three collaborators above.
+- **Agents.** The workspace does not know that an agent exists.
+  `exec` launches any binary; whether that binary is an AI tool or
+  `ls` is not the workspace's concern.
+- **Tasks, sessions, approvals, preferences.** All of these are
+  DevDev-product concepts that live *above* this layer. The
+  workspace crate can be consumed without any of them.
+- **Networks, credentials, identity.** The workspace does not
+  open sockets and does not store secrets. A process launched
+  through `exec` may do either, because it is a real host process —
+  but the workspace itself neither provides nor mediates those.
+
+This is a deliberate encapsulation boundary. Everything domain-
+specific belongs on top of the workspace, not inside it.
+
 ## The in-memory filesystem
 
 ### What it models
@@ -190,8 +215,11 @@ Create an empty filesystem, mount it, run one process, drop.
 ### Seeded workspace
 
 Create a filesystem, populate it with files the caller already has
-(a git repo, a tarball contents, a fixture tree), mount, run
-processes, optionally snapshot.
+(fixture trees, tarball contents, a checked-out tree of source),
+mount, run processes, optionally snapshot. The workspace does not
+know what the content is — the caller either writes bytes directly
+or runs a seeding binary (e.g. `git clone`, `tar -x`) via the
+process launcher.
 
 ### Resumable workspace
 

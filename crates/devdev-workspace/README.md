@@ -8,6 +8,12 @@ curated environment.
 This crate is the workspace layer of [DevDev](https://github.com/goldenwitch/devdev),
 extracted so it can be used standalone.
 
+The workspace is a pure substrate: it has no concept of repos,
+agents, tasks, or sessions, and will not grow commands for them.
+To drop a git repo inside, run `git clone` through `Workspace::exec`
+the same way a human would — the crate exposes the mount and the
+launcher; the rest is just a normal process doing normal work.
+
 > ⚠️ **DevDev does not claim sandboxing.** The mount is a friendly
 > host-path for tools that expect one. A process run via
 > `Workspace::exec` still executes as your user, with your network, and

@@ -110,12 +110,15 @@ MonitorPR is the exemplar task. Its behaviour:
 
 1. Parse the PR reference (`owner/repo#number` or URL).
 2. Fetch the current head SHA and the diff against the base.
-3. Materialise the repository into a workspace at a conventional
-   path.
-4. Create an agent session scoped to that workspace.
-5. Seed the session with preliminary context: the user's
+3. Create an agent session scoped to a fresh workspace. The
+   workspace itself is repo-unaware; the agent materialises the
+   repo inside it by running `git clone` through the workspace's
+   process launcher, just as a human would. Task-layer context
+   (which repo, which ref) is passed to the agent as session
+   context, not as a workspace argument.
+4. Seed the session with preliminary context: the user's
    preference files, the PR metadata, the diff.
-6. Emit a first review as a staged output.
+5. Emit a first review as a staged output.
 
 ### On poll
 

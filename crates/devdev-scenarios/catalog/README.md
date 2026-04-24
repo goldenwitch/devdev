@@ -63,11 +63,17 @@ Scenarios prefer these assertions, in roughly this order:
 | ID | Title | Status | Notes |
 |----|-------|--------|-------|
 | S01 | Empty workspace up and down | ready | |
-| S02 | Load local repo into workspace | draft | needs repo-load IPC |
 | S03 | Agent uses the toolbelt | blocked | ACP session backend not yet wired |
 | S04 | Event arrives mid-session | blocked | same |
 | S05 | Teardown leaves nothing | ready | |
 | S06 | Checkpoint round-trip | ready | |
+
+The former S02 ("load local repo into workspace") was retired: the
+workspace is repo-unaware by design. When an agent needs a repo, it
+runs `git clone` through the workspace's process launcher — the same
+surface any other tool uses. That path is already covered by S03
+once the session backend lands. See
+[`../../../spirit/02-workspace-contract.md`](../../../spirit/02-workspace-contract.md).
 
 When a blocked scenario unblocks, flip `status: ready` in its front
 matter and write the test.
