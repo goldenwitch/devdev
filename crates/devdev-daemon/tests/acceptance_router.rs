@@ -1,13 +1,13 @@
 //! Acceptance tests for P2-06 — Session Router.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use devdev_daemon::router::{
     AgentResponse, ResponseChunk, RouterError, SessionBackend, SessionContext, SessionRouter,
 };
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{Mutex, mpsc};
 
 // ── Mock backend ───────────────────────────────────────────────
 
@@ -259,7 +259,10 @@ async fn crash_recovery_recreates_sessions() {
     let old_ids: Vec<String> = sessions_before.iter().map(|(_, s)| s.clone()).collect();
     let new_ids: Vec<String> = sessions_after.iter().map(|(_, s)| s.clone()).collect();
     for old in &old_ids {
-        assert!(!new_ids.contains(old), "session IDs should change after recovery");
+        assert!(
+            !new_ids.contains(old),
+            "session IDs should change after recovery"
+        );
     }
 }
 

@@ -74,8 +74,10 @@ impl AcpSessionBackend {
                         None => (self.program.clone(), self.args.clone()),
                     };
                 let argv: Vec<&str> = args.iter().map(String::as_str).collect();
-                let mut client_config = AcpClientConfig::default();
-                client_config.env_overrides = crate::realpath_shim::prepare_nodejs_options();
+                let client_config = AcpClientConfig {
+                    env_overrides: crate::realpath_shim::prepare_nodejs_options(),
+                    ..AcpClientConfig::default()
+                };
                 let client = AcpClient::connect_process(
                     &program,
                     &argv,
@@ -89,8 +91,7 @@ impl AcpSessionBackend {
                 // Copilot CLI advertises `copilot-login` even when already
                 // authenticated; it returns `{}` in that case. A `NoAuth`
                 // result here means "nothing to do" — treat as success.
-                let methods: Vec<String> =
-                    init.auth_methods.iter().map(|m| m.id.clone()).collect();
+                let methods: Vec<String> = init.auth_methods.iter().map(|m| m.id.clone()).collect();
                 if !methods.is_empty() {
                     match client.authenticate(&methods).await {
                         Ok(_) => {}
@@ -106,9 +107,9 @@ impl AcpSessionBackend {
 
 fn acp_to_router(e: AcpError) -> RouterError {
     match e {
-        AcpError::SubprocessCrashed(_)
-        | AcpError::AgentDisconnected
-        | AcpError::BrokenPipe => RouterError::SubprocessCrashed,
+        AcpError::SubprocessCrashed(_) | AcpError::AgentDisconnected | AcpError::BrokenPipe => {
+            RouterError::SubprocessCrashed
+        }
         other => RouterError::Backend(other.to_string()),
     }
 }
@@ -277,10 +278,7 @@ impl AcpHandler for RouterHandler {
         Err(not_supported("terminal/release"))
     }
 
-    async fn on_fs_read(
-        &self,
-        _params: ReadTextFileParams,
-    ) -> HandlerResult<ReadTextFileResult> {
+    async fn on_fs_read(&self, _params: ReadTextFileParams) -> HandlerResult<ReadTextFileResult> {
         Err(not_supported("fs/read_text_file"))
     }
 

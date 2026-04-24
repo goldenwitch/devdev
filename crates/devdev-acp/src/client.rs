@@ -217,8 +217,12 @@ impl AcpClient {
             while let Some(msg) = outgoing_rx.recv().await {
                 if tracing::enabled!(target: "devdev_acp::wire", tracing::Level::TRACE) {
                     match serde_json::to_string(&msg) {
-                        Ok(s) => tracing::trace!(target: "devdev_acp::wire", dir = "tx", frame = %s),
-                        Err(e) => tracing::trace!(target: "devdev_acp::wire", dir = "tx", error = %e),
+                        Ok(s) => {
+                            tracing::trace!(target: "devdev_acp::wire", dir = "tx", frame = %s)
+                        }
+                        Err(e) => {
+                            tracing::trace!(target: "devdev_acp::wire", dir = "tx", error = %e)
+                        }
                     }
                 }
                 if let Err(e) = ndjson_writer.send(&msg).await {
@@ -240,8 +244,12 @@ impl AcpClient {
                     Ok(Some(msg)) => {
                         if tracing::enabled!(target: "devdev_acp::wire", tracing::Level::TRACE) {
                             match serde_json::to_string(&msg) {
-                                Ok(s) => tracing::trace!(target: "devdev_acp::wire", dir = "rx", frame = %s),
-                                Err(e) => tracing::trace!(target: "devdev_acp::wire", dir = "rx", error = %e),
+                                Ok(s) => {
+                                    tracing::trace!(target: "devdev_acp::wire", dir = "rx", frame = %s)
+                                }
+                                Err(e) => {
+                                    tracing::trace!(target: "devdev_acp::wire", dir = "rx", error = %e)
+                                }
                             }
                         }
                         Self::dispatch_incoming(
@@ -433,9 +441,10 @@ impl AcpClient {
     ) -> Result<R, AcpError> {
         let id = RequestId::Number(self.next_id.fetch_add(1, Ordering::Relaxed));
         let params_json = match params {
-            Some(p) => Some(serde_json::to_value(p).map_err(|e| {
-                AcpError::MalformedResponse(format!("serialize params: {e}"))
-            })?),
+            Some(p) => Some(
+                serde_json::to_value(p)
+                    .map_err(|e| AcpError::MalformedResponse(format!("serialize params: {e}")))?,
+            ),
             None => None,
         };
         let (tx, rx) = oneshot::channel();
@@ -460,8 +469,7 @@ impl AcpClient {
             }
         };
         if let Some(err) = resp.error {
-            if err.code == error_codes::INTERNAL_ERROR
-                && err.message == AGENT_DISCONNECTED_SENTINEL
+            if err.code == error_codes::INTERNAL_ERROR && err.message == AGENT_DISCONNECTED_SENTINEL
             {
                 return Err(AcpError::AgentDisconnected);
             }
@@ -495,10 +503,7 @@ impl AcpClient {
     /// Authenticate using an advertised method list. Returns the chosen
     /// [`AuthStrategy`] so callers can report what happened (env, method
     /// name, or none).
-    pub async fn authenticate(
-        &self,
-        advertised: &[String],
-    ) -> Result<AuthStrategy, AcpError> {
+    pub async fn authenticate(&self, advertised: &[String]) -> Result<AuthStrategy, AcpError> {
         let strat = choose_strategy(advertised);
         match &strat {
             AuthStrategy::EnvToken(_) => Ok(strat),
@@ -508,8 +513,7 @@ impl AcpClient {
                     method_id: method.clone(),
                     token,
                 };
-                let _out: AuthenticateResult =
-                    self.call("authenticate", Some(params)).await?;
+                let _out: AuthenticateResult = self.call("authenticate", Some(params)).await?;
                 Ok(strat)
             }
             AuthStrategy::None => Err(AcpError::NoAuth),
@@ -527,10 +531,7 @@ impl AcpClient {
     /// turn (handler callback, stream chunk) resets the clock on the
     /// reader side, but *this* future completes only when the turn
     /// terminates.
-    pub async fn prompt(
-        &self,
-        params: PromptParams,
-    ) -> Result<PromptResult, AcpError> {
+    pub async fn prompt(&self, params: PromptParams) -> Result<PromptResult, AcpError> {
         self.call_with_timeout("session/prompt", Some(params), self.config.idle_timeout)
             .await
     }
@@ -544,7 +545,10 @@ impl AcpClient {
         // a null result. Agents like Copilot CLI may not implement it
         // (returning `-32601 Method not found`); treat that as a no-op
         // since cancel is best-effort.
-        match self.call::<_, serde_json::Value>("session/cancel", Some(params)).await {
+        match self
+            .call::<_, serde_json::Value>("session/cancel", Some(params))
+            .await
+        {
             Ok(_) => Ok(()),
             Err(AcpError::Rpc { code: -32601, .. }) => {
                 tracing::debug!(
@@ -580,9 +584,7 @@ impl AcpClient {
     }
 }
 
-fn parse_params<T: DeserializeOwned>(
-    params: Option<serde_json::Value>,
-) -> Result<T, RpcError> {
+fn parse_params<T: DeserializeOwned>(params: Option<serde_json::Value>) -> Result<T, RpcError> {
     let v = params.unwrap_or(serde_json::Value::Null);
     serde_json::from_value(v).map_err(|e| RpcError {
         code: error_codes::INVALID_PARAMS,
@@ -620,7 +622,7 @@ mod tests {
             data: None,
         };
         let acp_err: AcpError = rpc_err.into();
-        
+
         match acp_err {
             AcpError::Rpc { code, .. } => {
                 assert_eq!(code, -32601, "code should be preserved in AcpError::Rpc");

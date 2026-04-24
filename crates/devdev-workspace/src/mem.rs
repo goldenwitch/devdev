@@ -547,12 +547,7 @@ impl Fs {
 
     // ---- Symlink / hardlink ---------------------------------------------
 
-    pub fn symlink(
-        &mut self,
-        parent: Ino,
-        name: &[u8],
-        target: &[u8],
-    ) -> Result<InodeAttr, Errno> {
+    pub fn symlink(&mut self, parent: Ino, name: &[u8], target: &[u8]) -> Result<InodeAttr, Errno> {
         validate_name(name)?;
         self.ensure_dir_no_entry(parent, name)?;
         let add = target.len() as u64;
@@ -597,12 +592,7 @@ impl Fs {
         }
     }
 
-    pub fn link(
-        &mut self,
-        ino: Ino,
-        new_parent: Ino,
-        new_name: &[u8],
-    ) -> Result<InodeAttr, Errno> {
+    pub fn link(&mut self, ino: Ino, new_parent: Ino, new_name: &[u8]) -> Result<InodeAttr, Errno> {
         validate_name(new_name)?;
         let src = self.get(ino)?;
         if matches!(src.body, Body::Dir(_)) {
@@ -753,8 +743,7 @@ impl Fs {
                         // that contained this symlink (i.e. the prefix of
                         // `path` up to component `i`).
                         let parent_path = prefix_path(path, i);
-                        let mut new_path =
-                            Vec::with_capacity(parent_path.len() + 1 + target.len());
+                        let mut new_path = Vec::with_capacity(parent_path.len() + 1 + target.len());
                         if parent_path.is_empty() {
                             new_path.push(b'/');
                         } else {

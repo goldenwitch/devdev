@@ -186,10 +186,7 @@ async fn ipc_shutdown_exits_cleanly() {
         let req = conn.read_request().await.unwrap().unwrap();
         assert_eq!(req.method, "shutdown");
 
-        let resp = IpcResponse::ok(
-            req.id,
-            serde_json::json!({"checkpoint_saved": true}),
-        );
+        let resp = IpcResponse::ok(req.id, serde_json::json!({"checkpoint_saved": true}));
         conn.write_response(&resp).await.unwrap();
     });
 
@@ -333,4 +330,3 @@ fn pid_read_nonexistent() {
     let pid = devdev_daemon::pid::read_pid(dir.path()).unwrap();
     assert!(pid.is_none());
 }
-

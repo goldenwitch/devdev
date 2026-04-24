@@ -22,11 +22,7 @@ impl RateLimitTracker {
         self.reset_at.store(reset_at, Ordering::Relaxed);
 
         if remaining < 10 {
-            tracing::warn!(
-                remaining,
-                reset_at,
-                "GitHub API rate limit low"
-            );
+            tracing::warn!(remaining, reset_at, "GitHub API rate limit low");
         }
     }
 

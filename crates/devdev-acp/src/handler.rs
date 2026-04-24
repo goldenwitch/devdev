@@ -36,19 +36,14 @@ pub trait AcpHandler: Send + Sync {
         params: TerminalOutputParams,
     ) -> HandlerResult<TerminalOutputResult>;
 
-    async fn on_terminal_wait(
-        &self,
-        params: WaitForExitParams,
-    ) -> HandlerResult<WaitForExitResult>;
+    async fn on_terminal_wait(&self, params: WaitForExitParams)
+    -> HandlerResult<WaitForExitResult>;
 
     async fn on_terminal_kill(&self, params: KillTerminalParams) -> HandlerResult<()>;
 
     async fn on_terminal_release(&self, params: ReleaseTerminalParams) -> HandlerResult<()>;
 
-    async fn on_fs_read(
-        &self,
-        params: ReadTextFileParams,
-    ) -> HandlerResult<ReadTextFileResult>;
+    async fn on_fs_read(&self, params: ReadTextFileParams) -> HandlerResult<ReadTextFileResult>;
 
     async fn on_fs_write(&self, params: WriteTextFileParams) -> HandlerResult<()>;
 

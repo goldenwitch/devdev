@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use tokio::sync::{watch, Mutex};
+use tokio::sync::{Mutex, watch};
 use tracing;
 
 use crate::registry::TaskRegistry;
@@ -20,10 +20,7 @@ impl TaskScheduler {
 
     /// Run the scheduling loop. Polls each task at its requested interval.
     /// Returns when shutdown is signaled.
-    pub async fn run(
-        &self,
-        mut shutdown: watch::Receiver<bool>,
-    ) -> Vec<TaskMessage> {
+    pub async fn run(&self, mut shutdown: watch::Receiver<bool>) -> Vec<TaskMessage> {
         let mut all_messages = Vec::new();
         let mut handles: Vec<tokio::task::JoinHandle<Vec<TaskMessage>>> = Vec::new();
 

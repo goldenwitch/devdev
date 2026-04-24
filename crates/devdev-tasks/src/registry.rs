@@ -5,7 +5,8 @@ use std::collections::HashMap;
 use crate::task::{Task, TaskError, TaskStatus};
 
 /// Factory function for deserializing tasks from checkpoint.
-pub type TaskFactory = Box<dyn Fn(serde_json::Value) -> Result<Box<dyn Task>, TaskError> + Send + Sync>;
+pub type TaskFactory =
+    Box<dyn Fn(serde_json::Value) -> Result<Box<dyn Task>, TaskError> + Send + Sync>;
 
 /// Registry of task factories, keyed by task type string.
 pub struct TaskFactories {
@@ -129,9 +130,7 @@ impl TaskRegistry {
         data: &serde_json::Value,
         factories: &TaskFactories,
     ) -> Result<Self, TaskError> {
-        let next_id = data["next_id"]
-            .as_u64()
-            .unwrap_or(1);
+        let next_id = data["next_id"].as_u64().unwrap_or(1);
 
         let mut tasks = HashMap::new();
 
@@ -142,11 +141,9 @@ impl TaskRegistry {
                     .ok_or_else(|| TaskError::Serialization("missing task type".into()))?;
                 let state = &entry["state"];
 
-                let factory = factories
-                    .get(task_type)
-                    .ok_or_else(|| {
-                        TaskError::Serialization(format!("unknown task type: {task_type}"))
-                    })?;
+                let factory = factories.get(task_type).ok_or_else(|| {
+                    TaskError::Serialization(format!("unknown task type: {task_type}"))
+                })?;
 
                 let task = factory(state.clone())?;
                 tasks.insert(task.id().to_string(), task);

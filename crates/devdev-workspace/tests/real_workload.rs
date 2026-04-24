@@ -60,7 +60,10 @@ fn find_and_wc_the_tree() {
     // which drives hundreds of lookups/readdirs through the mount.
     let (code, out) = run(&ws, "find . -type f | wc -l", b"/data");
     assert_eq!(code, 0, "output:\n{out}");
-    let n: u32 = out.trim().parse().unwrap_or_else(|_| panic!("bad wc out: {out:?}"));
+    let n: u32 = out
+        .trim()
+        .parse()
+        .unwrap_or_else(|_| panic!("bad wc out: {out:?}"));
     assert_eq!(n, 100, "expected 100 files, saw {n}");
 }
 
@@ -76,7 +79,10 @@ fn cat_every_file_and_total_bytes() {
         b"/data",
     );
     assert_eq!(code, 0, "output:\n{out}");
-    let bytes: usize = out.trim().parse().unwrap_or_else(|_| panic!("bad out: {out:?}"));
+    let bytes: usize = out
+        .trim()
+        .parse()
+        .unwrap_or_else(|_| panic!("bad out: {out:?}"));
     // Each file is exactly "dir=X idx=N\n". X is 1 byte, N is 1 byte.
     // Total per file: "dir=X idx=N\n" = 12 bytes. 100 files => 1200.
     assert_eq!(bytes, 1200, "expected 1200 bytes, saw {bytes}");
@@ -94,7 +100,10 @@ fn write_many_files_via_shell() {
         b"/work",
     );
     assert_eq!(code, 0, "output:\n{out}");
-    let n: u32 = out.trim().parse().unwrap_or_else(|_| panic!("bad out: {out:?}"));
+    let n: u32 = out
+        .trim()
+        .parse()
+        .unwrap_or_else(|_| panic!("bad out: {out:?}"));
     assert_eq!(n, 200, "expected 200 files in /work, saw {n}");
 
     // Verify a handful of them land in MemFs with correct content.
@@ -120,7 +129,10 @@ fn grep_pipeline() {
     // Grep for a pattern that appears in exactly 10 files (all idx=7).
     let (code, out) = run(&ws, "grep -l 'idx=7' */*.txt | wc -l", b"/data");
     assert_eq!(code, 0, "output:\n{out}");
-    let n: u32 = out.trim().parse().unwrap_or_else(|_| panic!("bad out: {out:?}"));
+    let n: u32 = out
+        .trim()
+        .parse()
+        .unwrap_or_else(|_| panic!("bad out: {out:?}"));
     assert_eq!(n, 10, "expected 10 matches, saw {n}");
 }
 
@@ -139,6 +151,8 @@ fn deep_mkdir_and_nested_writes() {
     // Confirm via MemFs.
     let fs = ws.fs();
     let g = fs.lock().unwrap();
-    let marker = g.read_path(b"/work/a/b/c/d/e/f/marker").expect("read marker");
+    let marker = g
+        .read_path(b"/work/a/b/c/d/e/f/marker")
+        .expect("read marker");
     assert_eq!(marker, b"deep\n");
 }

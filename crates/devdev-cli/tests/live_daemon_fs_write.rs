@@ -47,8 +47,8 @@
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use devdev_cli::daemon_cli::{run_up, UpArgs};
-use devdev_daemon::ipc::{read_port, IpcClient};
+use devdev_cli::daemon_cli::{UpArgs, run_up};
+use devdev_daemon::ipc::{IpcClient, read_port};
 
 fn live_enabled() -> bool {
     std::env::var("DEVDEV_LIVE_COPILOT")
@@ -196,10 +196,7 @@ async fn devdev_up_agent_fs_write_lands_in_daemon_fs() {
     //       the post-state through the same channel the agent used.
     let read_resp = tokio::time::timeout(
         Duration::from_secs(5),
-        client.request(
-            "fs/read",
-            serde_json::json!({ "path": target_path }),
-        ),
+        client.request("fs/read", serde_json::json!({ "path": target_path })),
     )
     .await
     .expect("fs/read IPC timed out")
@@ -216,16 +213,12 @@ async fn devdev_up_agent_fs_write_lands_in_daemon_fs() {
     let bytes_utf8 = read_result
         .get("content")
         .and_then(|v| v.as_str())
-        .unwrap_or_else(|| {
-            panic!("fs/read result missing `content` string field: {read_result}")
-        })
+        .unwrap_or_else(|| panic!("fs/read result missing `content` string field: {read_result}"))
         .to_string();
 
     // Shut the daemon down cleanly before the assert so a failure
     // doesn't leave a zombie port/pid file behind.
-    let _ = client
-        .request("shutdown", serde_json::json!({}))
-        .await;
+    let _ = client.request("shutdown", serde_json::json!({})).await;
     drop(client);
     let _ = tokio::time::timeout(Duration::from_secs(5), up_task).await;
 

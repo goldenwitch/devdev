@@ -255,12 +255,7 @@ fn git_log_reads_materialised_repo() {
     let mut out = Vec::new();
     let args: &[&OsStr] = &[OsStr::new("log"), OsStr::new("--oneline")];
     let code = ws
-        .exec(
-            OsStr::new("git"),
-            args,
-            b"/repos/org/acme",
-            &mut out,
-        )
+        .exec(OsStr::new("git"), args, b"/repos/org/acme", &mut out)
         .expect("exec git log");
     let text = String::from_utf8_lossy(&out);
     assert_eq!(code, 0, "git log exit={code}, output:\n{text}");

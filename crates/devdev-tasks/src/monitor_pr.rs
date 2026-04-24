@@ -14,8 +14,14 @@ use crate::task::{Task, TaskError, TaskMessage, TaskStatus};
 /// Callback for getting agent reviews. Takes a prompt, returns review text.
 /// This is how MonitorPrTask interacts with the agent without depending on
 /// the daemon crate's SessionHandle directly.
-pub type ReviewFn =
-    Arc<dyn Fn(String) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, String>> + Send>> + Send + Sync>;
+pub type ReviewFn = Arc<
+    dyn Fn(
+            String,
+        )
+            -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, String>> + Send>>
+        + Send
+        + Sync,
+>;
 
 /// A task that monitors a single GitHub PR.
 pub struct MonitorPrTask {
@@ -68,8 +74,7 @@ impl MonitorPrTask {
              Title: {}\n\
              Description: {}\n\n\
              Diff:\n```\n{}\n```\n\n",
-            self.pr_ref.number, self.pr_ref.owner, self.pr_ref.repo,
-            pr_title, pr_body, diff,
+            self.pr_ref.number, self.pr_ref.owner, self.pr_ref.repo, pr_title, pr_body, diff,
         );
 
         if !self.observations.is_empty() {
@@ -82,7 +87,7 @@ impl MonitorPrTask {
 
         prompt.push_str(
             "Review this PR. For inline comments, use the format [file:line] comment.\n\
-             Provide a summary of your findings."
+             Provide a summary of your findings.",
         );
 
         prompt
@@ -94,9 +99,11 @@ impl MonitorPrTask {
         let n = self.pr_ref.number;
 
         // Fetch PR info.
-        let pr = self.github.get_pr(o, r, n).await.map_err(|e| {
-            TaskError::PollFailed(format!("failed to fetch PR: {e}"))
-        })?;
+        let pr = self
+            .github
+            .get_pr(o, r, n)
+            .await
+            .map_err(|e| TaskError::PollFailed(format!("failed to fetch PR: {e}")))?;
 
         // Check if merged/closed.
         match pr.state {
@@ -114,20 +121,18 @@ impl MonitorPrTask {
         self.last_sha = Some(pr.head_sha.clone());
 
         // Fetch diff.
-        let diff = self.github.get_pr_diff(o, r, n).await.map_err(|e| {
-            TaskError::PollFailed(format!("failed to fetch diff: {e}"))
-        })?;
+        let diff = self
+            .github
+            .get_pr_diff(o, r, n)
+            .await
+            .map_err(|e| TaskError::PollFailed(format!("failed to fetch diff: {e}")))?;
 
         // Build prompt and get review.
-        let prompt = self.build_prompt(
-            &pr.title,
-            pr.body.as_deref().unwrap_or(""),
-            &diff,
-        );
+        let prompt = self.build_prompt(&pr.title, pr.body.as_deref().unwrap_or(""), &diff);
 
-        let review_text = (self.review_fn)(prompt).await.map_err(|e| {
-            TaskError::PollFailed(format!("agent review failed: {e}"))
-        })?;
+        let review_text = (self.review_fn)(prompt)
+            .await
+            .map_err(|e| TaskError::PollFailed(format!("agent review failed: {e}")))?;
 
         // Parse review.
         let parsed = parse_review(&review_text);

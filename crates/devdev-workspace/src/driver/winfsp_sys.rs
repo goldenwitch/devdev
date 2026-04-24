@@ -292,13 +292,7 @@ pub struct FSP_FILE_SYSTEM_INTERFACE {
     pub CanDelete:
         Option<unsafe extern "system" fn(*mut FSP_FILE_SYSTEM, PVOID, PWSTR) -> NTSTATUS>,
     pub Rename: Option<
-        unsafe extern "system" fn(
-            *mut FSP_FILE_SYSTEM,
-            PVOID,
-            PWSTR,
-            PWSTR,
-            BOOLEAN,
-        ) -> NTSTATUS,
+        unsafe extern "system" fn(*mut FSP_FILE_SYSTEM, PVOID, PWSTR, PWSTR, BOOLEAN) -> NTSTATUS,
     >,
     pub GetSecurity: Option<
         unsafe extern "system" fn(

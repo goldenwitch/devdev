@@ -59,8 +59,7 @@ fn resolve_copilot() -> Option<String> {
 }
 
 fn init_tracing() {
-    let default_filter =
-        "devdev_acp::wire=trace,devdev_workspace=debug,devdev_cli=debug,warn";
+    let default_filter = "devdev_acp::wire=trace,devdev_workspace=debug,devdev_cli=debug,warn";
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(default_filter));
     let _ = tracing_subscriber::fmt()
@@ -179,8 +178,7 @@ async fn copilot_accepts_mount_root_as_cwd() {
     // lives on C:, passes validation), then any real I/O through it
     // lands in our virtual FS.
     let junction_cwd = {
-        let j = std::env::temp_dir()
-            .join(format!("devdev-poc-junction-{}", std::process::id()));
+        let j = std::env::temp_dir().join(format!("devdev-poc-junction-{}", std::process::id()));
         let _ = std::fs::remove_dir(&j);
         let out = std::process::Command::new("cmd")
             .args([
@@ -188,7 +186,7 @@ async fn copilot_accepts_mount_root_as_cwd() {
                 "mklink",
                 "/J",
                 &j.display().to_string(),
-                &root_cwd.trim_end_matches('\\').to_string(),
+                root_cwd.trim_end_matches('\\'),
             ])
             .output();
         match out {
@@ -241,12 +239,15 @@ async fn copilot_accepts_mount_root_as_cwd() {
     let (chosen_cwd, session_id) = {
         let mut tried = Vec::new();
         let mut result = None;
-        for candidate in [&root_cwd, &subdir_cwd, &long_cwd, &junction_cwd, &control_cwd] {
-            match tokio::time::timeout(
-                Duration::from_secs(45),
-                backend.create_session(candidate),
-            )
-            .await
+        for candidate in [
+            &root_cwd,
+            &subdir_cwd,
+            &long_cwd,
+            &junction_cwd,
+            &control_cwd,
+        ] {
+            match tokio::time::timeout(Duration::from_secs(45), backend.create_session(candidate))
+                .await
             {
                 Ok(Ok(sid)) => {
                     eprintln!("[poc] create_session accepted cwd {candidate:?} -> {sid}");

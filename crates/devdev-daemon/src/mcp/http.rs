@@ -22,8 +22,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use rmcp::transport::{
-    StreamableHttpService,
-    streamable_http_server::session::local::LocalSessionManager,
+    StreamableHttpService, streamable_http_server::session::local::LocalSessionManager,
 };
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
@@ -146,7 +145,11 @@ async fn bearer_auth(expected: String, req: Request<Body>, next: Next) -> Respon
         );
         resp
     } else {
-        let reason = if provided.is_some() { "bad_bearer" } else { "missing_bearer" };
+        let reason = if provided.is_some() {
+            "bad_bearer"
+        } else {
+            "missing_bearer"
+        };
         tracing::debug!(
             target: "devdev_daemon::mcp::http",
             %method, %uri, status = 401u16, auth = reason,
@@ -155,10 +158,8 @@ async fn bearer_auth(expected: String, req: Request<Body>, next: Next) -> Respon
         let mut resp = (StatusCode::UNAUTHORIZED, r#"{"error":"unauthorized"}"#).into_response();
         // Hint to clients (and keeps Copilot's fallback probes consistent
         // with what the Node PoC observed).
-        resp.headers_mut().insert(
-            header::WWW_AUTHENTICATE,
-            HeaderValue::from_static("Bearer"),
-        );
+        resp.headers_mut()
+            .insert(header::WWW_AUTHENTICATE, HeaderValue::from_static("Bearer"));
         resp
     }
 }
@@ -180,10 +181,7 @@ fn generate_bearer() -> String {
     // cryptographically-secure source would do.
     let mut bytes = [0u8; 32];
     getrandom::fill(&mut bytes).expect("getrandom failed (platform lacks entropy source)");
-    bytes
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect::<String>()
+    bytes.iter().map(|b| format!("{b:02x}")).collect::<String>()
 }
 
 // ── Tests ─────────────────────────────────────────────────────────
@@ -298,11 +296,7 @@ mod tests {
         let client = reqwest::Client::new();
 
         // Base URL without /mcp suffix.
-        let base = server
-            .endpoint()
-            .url
-            .trim_end_matches("/mcp")
-            .to_string();
+        let base = server.endpoint().url.trim_end_matches("/mcp").to_string();
 
         for path in [
             "/.well-known/oauth-protected-resource",
@@ -370,9 +364,7 @@ mod tests {
         )
         .await;
         let list = parse_rmcp(list_resp).await;
-        let tools = list["result"]["tools"]
-            .as_array()
-            .expect("tools array");
+        let tools = list["result"]["tools"].as_array().expect("tools array");
         assert!(
             tools.iter().any(|t| t["name"] == "devdev_tasks_list"),
             "devdev_tasks_list should be present: {list:?}"

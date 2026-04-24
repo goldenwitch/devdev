@@ -80,9 +80,15 @@ fn env_is_curated() {
     let path = seen
         .get("PATH")
         .unwrap_or_else(|| panic!("PATH missing; full env:\n{dump}"));
-    assert!(!path.is_empty(), "PATH present but empty; full env:\n{dump}");
+    assert!(
+        !path.is_empty(),
+        "PATH present but empty; full env:\n{dump}"
+    );
 
-    let leaks: Vec<&String> = seen.keys().filter(|k| !allow.contains(k.as_str())).collect();
+    let leaks: Vec<&String> = seen
+        .keys()
+        .filter(|k| !allow.contains(k.as_str()))
+        .collect();
     assert!(
         leaks.is_empty(),
         "unexpected env vars leaked into child: {leaks:?}\nfull env dump:\n{dump}"

@@ -18,12 +18,20 @@ use async_trait::async_trait;
 #[async_trait]
 pub trait GitHubAdapter: Send + Sync {
     /// Fetch PR metadata.
-    async fn get_pr(&self, owner: &str, repo: &str, number: u64)
-        -> Result<PullRequest, GitHubError>;
+    async fn get_pr(
+        &self,
+        owner: &str,
+        repo: &str,
+        number: u64,
+    ) -> Result<PullRequest, GitHubError>;
 
     /// Fetch the unified diff for a PR.
-    async fn get_pr_diff(&self, owner: &str, repo: &str, number: u64)
-        -> Result<String, GitHubError>;
+    async fn get_pr_diff(
+        &self,
+        owner: &str,
+        repo: &str,
+        number: u64,
+    ) -> Result<String, GitHubError>;
 
     /// List all review comments on a PR.
     async fn list_pr_comments(

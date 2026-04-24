@@ -43,9 +43,7 @@ impl Scratch {
 /// added or removed path lives inside `data_dir`. Anything outside
 /// is a host-isolation violation.
 fn assert_confined(outer: &Path, data_dir: &Path, before: &DirSnapshot, after: &DirSnapshot) {
-    let data_rel = data_dir
-        .strip_prefix(outer)
-        .expect("data_dir inside outer");
+    let data_rel = data_dir.strip_prefix(outer).expect("data_dir inside outer");
     let (added, removed) = before.diff(after);
     let leaks_added: Vec<_> = added
         .into_iter()
@@ -95,10 +93,8 @@ async fn s01_empty_workspace_up_and_down() {
     // (just the root `/` directory, no files, no mounts).
     let cp_path = scratch.data_dir.join("checkpoint.bin");
     assert!(cp_path.exists(), "checkpoint.bin missing after down");
-    let proj = CheckpointProjection::from_bytes(
-        &fs::read(&cp_path).expect("read checkpoint"),
-    )
-    .expect("decode checkpoint");
+    let proj = CheckpointProjection::from_bytes(&fs::read(&cp_path).expect("read checkpoint"))
+        .expect("decode checkpoint");
     assert_eq!(
         proj.paths,
         vec!["/".to_string()],
@@ -139,8 +135,7 @@ async fn s05_teardown_leaves_nothing() {
         .map(|e| e.file_name().to_string_lossy().into_owned())
         .collect();
 
-    let expected: BTreeSet<String> =
-        ["checkpoint.bin"].iter().map(|s| s.to_string()).collect();
+    let expected: BTreeSet<String> = ["checkpoint.bin"].iter().map(|s| s.to_string()).collect();
     let unexpected: Vec<_> = remaining.difference(&expected).cloned().collect();
     assert!(
         unexpected.is_empty(),
@@ -166,18 +161,15 @@ async fn s06_checkpoint_round_trip() {
 
     let cp_path = scratch.data_dir.join("checkpoint.bin");
     let bytes1 = fs::read(&cp_path).expect("read checkpoint 1");
-    let proj1 =
-        CheckpointProjection::from_bytes(&bytes1).expect("decode 1");
+    let proj1 = CheckpointProjection::from_bytes(&bytes1).expect("decode 1");
 
     // Phase 2: resume from checkpoint, immediately checkpoint again.
-    let mut d2 =
-        DaemonProcess::spawn(&scratch.data_dir, true).expect("devdev up --checkpoint");
+    let mut d2 = DaemonProcess::spawn(&scratch.data_dir, true).expect("devdev up --checkpoint");
     let status2 = d2.status().await.expect("status 2");
     d2.shutdown().expect("devdev down (2)");
 
     let bytes2 = fs::read(&cp_path).expect("read checkpoint 2");
-    let proj2 =
-        CheckpointProjection::from_bytes(&bytes2).expect("decode 2");
+    let proj2 = CheckpointProjection::from_bytes(&bytes2).expect("decode 2");
 
     // The projection (paths + hashes + mounts) must round-trip
     // byte-identically even if the raw checkpoint bytes differ
@@ -205,8 +197,8 @@ async fn s06_checkpoint_round_trip() {
 async fn s06_checkpoint_missing_is_fresh_start() {
     let scratch = Scratch::new();
 
-    let mut daemon = DaemonProcess::spawn(&scratch.data_dir, true)
-        .expect("devdev up --checkpoint on empty dir");
+    let mut daemon =
+        DaemonProcess::spawn(&scratch.data_dir, true).expect("devdev up --checkpoint on empty dir");
     let _ = daemon.status().await.expect("status");
     daemon.shutdown().expect("devdev down");
 }

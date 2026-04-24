@@ -13,10 +13,8 @@
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use devdev_cli::daemon_cli::{
-    run_down, run_status, run_up, DownArgs, StatusArgs, UpArgs,
-};
-use devdev_daemon::ipc::{read_port, IpcClient};
+use devdev_cli::daemon_cli::{DownArgs, StatusArgs, UpArgs, run_down, run_status, run_up};
+use devdev_daemon::ipc::{IpcClient, read_port};
 
 fn up_args(data_dir: &Path) -> UpArgs {
     UpArgs {

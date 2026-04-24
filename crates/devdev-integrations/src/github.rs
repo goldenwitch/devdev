@@ -4,9 +4,9 @@ use async_trait::async_trait;
 use reqwest::header::{ACCEPT, AUTHORIZATION, USER_AGENT};
 use std::env;
 
+use crate::GitHubAdapter;
 use crate::rate_limit::RateLimitTracker;
 use crate::types::*;
-use crate::GitHubAdapter;
 
 const API_BASE: &str = "https://api.github.com";
 
@@ -43,10 +43,7 @@ impl LiveGitHubAdapter {
     }
 
     /// Send a GET request and handle common errors.
-    async fn get_json<T: serde::de::DeserializeOwned>(
-        &self,
-        url: &str,
-    ) -> Result<T, GitHubError> {
+    async fn get_json<T: serde::de::DeserializeOwned>(&self, url: &str) -> Result<T, GitHubError> {
         let resp = self
             .client
             .get(url)
@@ -60,8 +57,7 @@ impl LiveGitHubAdapter {
         self.check_status(&resp)?;
 
         let text = resp.text().await?;
-        serde_json::from_str(&text)
-            .map_err(|e| GitHubError::Deserialize(format!("{e}: {text}")))
+        serde_json::from_str(&text).map_err(|e| GitHubError::Deserialize(format!("{e}: {text}")))
     }
 
     /// Send a GET and return raw text (for diffs).
@@ -82,11 +78,7 @@ impl LiveGitHubAdapter {
     }
 
     /// Send a POST with JSON body.
-    async fn post_json(
-        &self,
-        url: &str,
-        body: &serde_json::Value,
-    ) -> Result<(), GitHubError> {
+    async fn post_json(&self, url: &str, body: &serde_json::Value) -> Result<(), GitHubError> {
         let resp = self
             .client
             .post(url)
@@ -162,57 +154,27 @@ fn parse_pr(value: serde_json::Value) -> Result<PullRequest, GitHubError> {
 
     Ok(PullRequest {
         number: value["number"].as_u64().unwrap_or(0),
-        title: value["title"]
-            .as_str()
-            .unwrap_or("")
-            .to_string(),
-        author: value["user"]["login"]
-            .as_str()
-            .unwrap_or("")
-            .to_string(),
+        title: value["title"].as_str().unwrap_or("").to_string(),
+        author: value["user"]["login"].as_str().unwrap_or("").to_string(),
         state,
-        head_sha: value["head"]["sha"]
-            .as_str()
-            .unwrap_or("")
-            .to_string(),
-        base_sha: value["base"]["sha"]
-            .as_str()
-            .unwrap_or("")
-            .to_string(),
-        head_ref: value["head"]["ref"]
-            .as_str()
-            .unwrap_or("")
-            .to_string(),
-        base_ref: value["base"]["ref"]
-            .as_str()
-            .unwrap_or("")
-            .to_string(),
+        head_sha: value["head"]["sha"].as_str().unwrap_or("").to_string(),
+        base_sha: value["base"]["sha"].as_str().unwrap_or("").to_string(),
+        head_ref: value["head"]["ref"].as_str().unwrap_or("").to_string(),
+        base_ref: value["base"]["ref"].as_str().unwrap_or("").to_string(),
         body: value["body"].as_str().map(String::from),
-        created_at: value["created_at"]
-            .as_str()
-            .unwrap_or("")
-            .to_string(),
-        updated_at: value["updated_at"]
-            .as_str()
-            .unwrap_or("")
-            .to_string(),
+        created_at: value["created_at"].as_str().unwrap_or("").to_string(),
+        updated_at: value["updated_at"].as_str().unwrap_or("").to_string(),
     })
 }
 
 fn parse_comment(value: &serde_json::Value) -> Comment {
     Comment {
         id: value["id"].as_u64().unwrap_or(0),
-        author: value["user"]["login"]
-            .as_str()
-            .unwrap_or("")
-            .to_string(),
+        author: value["user"]["login"].as_str().unwrap_or("").to_string(),
         body: value["body"].as_str().unwrap_or("").to_string(),
         path: value["path"].as_str().map(String::from),
         line: value["line"].as_u64(),
-        created_at: value["created_at"]
-            .as_str()
-            .unwrap_or("")
-            .to_string(),
+        created_at: value["created_at"].as_str().unwrap_or("").to_string(),
     }
 }
 
@@ -236,8 +198,7 @@ impl GitHubAdapter for LiveGitHubAdapter {
         number: u64,
     ) -> Result<String, GitHubError> {
         let url = format!("{API_BASE}/repos/{owner}/{repo}/pulls/{number}");
-        self.get_text(&url, "application/vnd.github.v3.diff")
-            .await
+        self.get_text(&url, "application/vnd.github.v3.diff").await
     }
 
     async fn list_pr_comments(
@@ -284,8 +245,7 @@ impl GitHubAdapter for LiveGitHubAdapter {
         number: u64,
         review: Review,
     ) -> Result<(), GitHubError> {
-        let url =
-            format!("{API_BASE}/repos/{owner}/{repo}/pulls/{number}/reviews");
+        let url = format!("{API_BASE}/repos/{owner}/{repo}/pulls/{number}/reviews");
 
         let event = match review.event {
             ReviewEvent::Approve => "APPROVE",
@@ -321,8 +281,7 @@ impl GitHubAdapter for LiveGitHubAdapter {
         number: u64,
         body: &str,
     ) -> Result<(), GitHubError> {
-        let url =
-            format!("{API_BASE}/repos/{owner}/{repo}/issues/{number}/comments");
+        let url = format!("{API_BASE}/repos/{owner}/{repo}/issues/{number}/comments");
         let payload = serde_json::json!({ "body": body });
         self.post_json(&url, &payload).await
     }
@@ -339,11 +298,8 @@ impl GitHubAdapter for LiveGitHubAdapter {
         let mergeable = pr_value["mergeable"].as_bool();
 
         // Get check runs for the head SHA
-        let head_sha = pr_value["head"]["sha"]
-            .as_str()
-            .unwrap_or("");
-        let checks_url =
-            format!("{API_BASE}/repos/{owner}/{repo}/commits/{head_sha}/check-runs");
+        let head_sha = pr_value["head"]["sha"].as_str().unwrap_or("");
+        let checks_url = format!("{API_BASE}/repos/{owner}/{repo}/commits/{head_sha}/check-runs");
         let checks_value: serde_json::Value = self.get_json(&checks_url).await?;
 
         let checks = checks_value["check_runs"]
@@ -368,9 +324,6 @@ impl GitHubAdapter for LiveGitHubAdapter {
     ) -> Result<String, GitHubError> {
         let url = format!("{API_BASE}/repos/{owner}/{repo}/pulls/{number}");
         let value: serde_json::Value = self.get_json(&url).await?;
-        Ok(value["head"]["sha"]
-            .as_str()
-            .unwrap_or("")
-            .to_string())
+        Ok(value["head"]["sha"].as_str().unwrap_or("").to_string())
     }
 }

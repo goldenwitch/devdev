@@ -6,9 +6,7 @@ use std::ffi::{OsStr, OsString};
 use std::io::{self, Read, Write};
 use std::path::Path;
 
-use portable_pty::{
-    Child, CommandBuilder, ExitStatus, MasterPty, PtySize, native_pty_system,
-};
+use portable_pty::{Child, CommandBuilder, ExitStatus, MasterPty, PtySize, native_pty_system};
 
 pub use portable_pty::PtySize as Size;
 

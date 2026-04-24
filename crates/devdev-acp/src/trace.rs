@@ -26,9 +26,15 @@ pub enum TraceEvent {
     /// `fs/write_text_file` was applied to the VFS.
     FsWrite { path: String, bytes: usize },
     /// `session/request_permission` was auto-approved.
-    PermissionGranted { tool_call_id: String, option_id: String },
+    PermissionGranted {
+        tool_call_id: String,
+        option_id: String,
+    },
     /// A `session/update` notification arrived.
-    SessionUpdate { session_id: String, kind: &'static str },
+    SessionUpdate {
+        session_id: String,
+        kind: &'static str,
+    },
 }
 
 /// Receiver for [`TraceEvent`]s. Safe to call concurrently; implementations

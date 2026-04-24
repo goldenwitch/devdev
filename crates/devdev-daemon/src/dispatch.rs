@@ -3,15 +3,14 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use serde_json::{json, Value};
-use tokio::sync::{watch, Mutex};
+use serde_json::{Value, json};
+use tokio::sync::{Mutex, watch};
 
 use devdev_integrations::GitHubAdapter;
 use devdev_tasks::approval::{ApprovalHandle, ApprovalPolicy, ApprovalResponse};
 use devdev_tasks::monitor_pr::{MonitorPrTask, ReviewFn};
 use devdev_tasks::registry::TaskRegistry;
 use devdev_workspace::Fs;
-
 
 use crate::ipc::{IpcRequest, IpcResponse};
 use crate::router::{SessionHandle, SessionRouter};
@@ -35,6 +34,7 @@ pub struct DispatchContext {
 }
 
 impl DispatchContext {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         router: Arc<SessionRouter>,
         tasks: Arc<Mutex<TaskRegistry>>,
@@ -128,10 +128,13 @@ impl DispatchContext {
 
         let handle = interactive.as_ref().unwrap();
         match handle.send_prompt(text).await {
-            Ok(resp) => IpcResponse::ok(req.id, json!({
-                "response": resp.text,
-                "stop_reason": resp.stop_reason,
-            })),
+            Ok(resp) => IpcResponse::ok(
+                req.id,
+                json!({
+                    "response": resp.text,
+                    "stop_reason": resp.stop_reason,
+                }),
+            ),
             Err(e) => IpcResponse::err(req.id, -1, e.to_string()),
         }
     }
@@ -142,7 +145,9 @@ impl DispatchContext {
             Some(d) => d.to_string(),
             None => return IpcResponse::err(req.id, -32602, "missing params.description"),
         };
-        let auto_approve = req.params.get("auto_approve")
+        let auto_approve = req
+            .params
+            .get("auto_approve")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
@@ -150,7 +155,13 @@ impl DispatchContext {
         let pr_ref_str = extract_pr_ref(&desc);
         let pr_ref_str = match pr_ref_str {
             Some(s) => s,
-            None => return IpcResponse::err(req.id, -32602, "could not find PR reference in description"),
+            None => {
+                return IpcResponse::err(
+                    req.id,
+                    -32602,
+                    "could not find PR reference in description",
+                );
+            }
         };
 
         let policy = if auto_approve {
@@ -159,7 +170,8 @@ impl DispatchContext {
             self.approval_policy
         };
 
-        let (gate, handle) = devdev_tasks::approval::approval_channel(policy, self.approval_timeout);
+        let (gate, handle) =
+            devdev_tasks::approval::approval_channel(policy, self.approval_timeout);
 
         // Store the new approval handle (replace previous one if any).
         {
@@ -180,9 +192,12 @@ impl DispatchContext {
         ) {
             Ok(task) => {
                 registry.add(Box::new(task));
-                IpcResponse::ok(req.id, json!({
-                    "task_id": task_id,
-                }))
+                IpcResponse::ok(
+                    req.id,
+                    json!({
+                        "task_id": task_id,
+                    }),
+                )
             }
             Err(e) => IpcResponse::err(req.id, -1, e.to_string()),
         }
@@ -212,10 +227,13 @@ impl DispatchContext {
         let tasks = self.tasks.lock().await;
         let sessions = self.router.active_sessions().await;
 
-        IpcResponse::ok(req.id, json!({
-            "tasks": tasks.len(),
-            "sessions": sessions.len(),
-        }))
+        IpcResponse::ok(
+            req.id,
+            json!({
+                "tasks": tasks.len(),
+                "sessions": sessions.len(),
+            }),
+        )
     }
 
     /// "shutdown" — signal the daemon to stop.
@@ -275,7 +293,8 @@ impl DispatchContext {
                     }
                     Err(e) => {
                         drop(registry);
-                        self.log_task_message(&task_id, &format!("error: {e}")).await;
+                        self.log_task_message(&task_id, &format!("error: {e}"))
+                            .await;
                     }
                 }
             }
@@ -307,7 +326,11 @@ fn regex_lite_shorthand(desc: &str) -> Option<String> {
         if let Some(hash_pos) = word.find('#') {
             let before = &word[..hash_pos];
             let after = &word[hash_pos + 1..];
-            if before.contains('/') && !before.starts_with('/') && after.chars().all(|c| c.is_ascii_digit()) && !after.is_empty() {
+            if before.contains('/')
+                && !before.starts_with('/')
+                && after.chars().all(|c| c.is_ascii_digit())
+                && !after.is_empty()
+            {
                 return Some(word.to_string());
             }
         }

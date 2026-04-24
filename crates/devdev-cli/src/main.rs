@@ -5,7 +5,7 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 
 use devdev_cli::daemon_cli::{
-    run_down, run_send, run_status, run_up, DownArgs, SendArgs, StatusArgs, UpArgs,
+    DownArgs, SendArgs, StatusArgs, UpArgs, run_down, run_send, run_status, run_up,
 };
 
 #[derive(Parser, Debug)]

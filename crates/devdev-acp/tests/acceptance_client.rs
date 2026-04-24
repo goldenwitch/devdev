@@ -18,8 +18,8 @@ use devdev_acp::types::{
     InitializeResult, KillTerminalParams, NewSessionParams, NewSessionResult, PermissionOutcome,
     PermissionRequestParams, PermissionResponse, PromptContent, PromptParams, PromptResult,
     ReadTextFileParams, ReadTextFileResult, ReleaseTerminalParams, SessionUpdate,
-    SessionUpdateParams, StopReason, TerminalOutputParams, TerminalOutputResult,
-    WaitForExitParams, WaitForExitResult, WriteTextFileParams,
+    SessionUpdateParams, StopReason, TerminalOutputParams, TerminalOutputResult, WaitForExitParams,
+    WaitForExitResult, WriteTextFileParams,
 };
 use tokio::io::{DuplexStream, ReadHalf, WriteHalf, duplex, split};
 use tokio::sync::Mutex as AsyncMutex;
@@ -51,7 +51,8 @@ impl FakeAgent {
     }
 
     async fn reply(&self, id: RequestId, result: serde_json::Value) {
-        self.send(Message::Response(Response::success(id, result))).await;
+        self.send(Message::Response(Response::success(id, result)))
+            .await;
     }
 }
 
@@ -71,7 +72,11 @@ impl AcpHandler for RecordingHandler {
         params: PermissionRequestParams,
     ) -> HandlerResult<PermissionResponse> {
         // Always approve the first option.
-        let option_id = params.options.first().map(|o| o.option_id.clone()).unwrap_or_default();
+        let option_id = params
+            .options
+            .first()
+            .map(|o| o.option_id.clone())
+            .unwrap_or_default();
         Ok(PermissionResponse {
             outcome: PermissionOutcome::Selected { option_id },
         })
@@ -112,10 +117,7 @@ impl AcpHandler for RecordingHandler {
         Ok(())
     }
 
-    async fn on_fs_read(
-        &self,
-        params: ReadTextFileParams,
-    ) -> HandlerResult<ReadTextFileResult> {
+    async fn on_fs_read(&self, params: ReadTextFileParams) -> HandlerResult<ReadTextFileResult> {
         self.fs_reads.lock().unwrap().push(params);
         Ok(ReadTextFileResult {
             content: "file-contents".into(),
@@ -144,14 +146,9 @@ async fn harness(config: AcpClientConfig) -> Harness {
     let (client_end, agent_end) = duplex(64 * 1024);
     let (client_r, client_w) = split(client_end);
     let handler = Arc::new(RecordingHandler::default());
-    let client = AcpClient::connect_transport(
-        client_r,
-        client_w,
-        handler.clone(),
-        config,
-    )
-    .await
-    .unwrap();
+    let client = AcpClient::connect_transport(client_r, client_w, handler.clone(), config)
+        .await
+        .unwrap();
     Harness {
         client,
         agent: Arc::new(FakeAgent::new(agent_end)),
@@ -177,7 +174,9 @@ async fn initialize_round_trip() {
     let agent = h.agent.clone();
     let agent_task: JoinHandle<RequestId> = tokio::spawn(async move {
         let msg = agent.recv().await.unwrap();
-        let Message::Request(req) = msg else { panic!("expected request") };
+        let Message::Request(req) = msg else {
+            panic!("expected request")
+        };
         assert_eq!(req.method, "initialize");
         let result = serde_json::to_value(InitializeResult {
             protocol_version: 1,
@@ -185,8 +184,14 @@ async fn initialize_round_trip() {
                 name: "copilot".into(),
                 version: "1.0".into(),
             },
-            agent_capabilities: AgentCapabilities { streaming: Some(true) },
-            auth_methods: vec![devdev_acp::types::AuthMethod { id: "api_key".into(), name: None, description: None }],
+            agent_capabilities: AgentCapabilities {
+                streaming: Some(true),
+            },
+            auth_methods: vec![devdev_acp::types::AuthMethod {
+                id: "api_key".into(),
+                name: None,
+                description: None,
+            }],
         })
         .unwrap();
         agent.reply(req.id.clone(), result).await;
@@ -205,7 +210,9 @@ async fn new_session_returns_id() {
     let h = harness(Default::default()).await;
     let agent = h.agent.clone();
     tokio::spawn(async move {
-        let Message::Request(req) = agent.recv().await.unwrap() else { panic!() };
+        let Message::Request(req) = agent.recv().await.unwrap() else {
+            panic!()
+        };
         assert_eq!(req.method, "session/new");
         agent
             .reply(
@@ -236,19 +243,24 @@ async fn prompt_with_interleaved_updates() {
     let agent = h.agent.clone();
     let handler = h.handler.clone();
     tokio::spawn(async move {
-        let Message::Request(req) = agent.recv().await.unwrap() else { panic!() };
+        let Message::Request(req) = agent.recv().await.unwrap() else {
+            panic!()
+        };
         assert_eq!(req.method, "session/prompt");
         // Interleaved notifications.
         for txt in ["thinking", "streaming...", "done"] {
             agent
                 .send(Message::Notification(Notification::new(
                     "session/update",
-                    Some(serde_json::to_value(SessionUpdateParams {
-                        session_id: "s".into(),
-                        update: SessionUpdate::AgentMessageChunk {
-                            content: ContentBlock { text: txt.into() },
-                        },
-                    }).unwrap()),
+                    Some(
+                        serde_json::to_value(SessionUpdateParams {
+                            session_id: "s".into(),
+                            update: SessionUpdate::AgentMessageChunk {
+                                content: ContentBlock { text: txt.into() },
+                            },
+                        })
+                        .unwrap(),
+                    ),
                 )))
                 .await;
         }
@@ -289,7 +301,9 @@ async fn agent_terminal_create_dispatch() {
     // Drive a prompt; agent interleaves a terminal/create request, then
     // completes the turn.
     tokio::spawn(async move {
-        let Message::Request(prompt_req) = agent.recv().await.unwrap() else { panic!() };
+        let Message::Request(prompt_req) = agent.recv().await.unwrap() else {
+            panic!()
+        };
         // Send a terminal/create *request* to the client.
         agent
             .send(Message::Request(Request::new(
@@ -310,10 +324,11 @@ async fn agent_terminal_create_dispatch() {
             .await;
         // Read the client's response to our terminal/create.
         let resp = agent.recv().await.unwrap();
-        let Message::Response(r) = resp else { panic!("expected response, got {resp:?}") };
+        let Message::Response(r) = resp else {
+            panic!("expected response, got {resp:?}")
+        };
         assert_eq!(r.id, RequestId::Number(9001));
-        let result: CreateTerminalResult =
-            serde_json::from_value(r.result.unwrap()).unwrap();
+        let result: CreateTerminalResult = serde_json::from_value(r.result.unwrap()).unwrap();
         assert_eq!(result.terminal_id, "term-1");
         // Finish the prompt.
         agent
@@ -347,7 +362,9 @@ async fn agent_fs_read_dispatch() {
     let agent = h.agent.clone();
     let handler = h.handler.clone();
     tokio::spawn(async move {
-        let Message::Request(prompt_req) = agent.recv().await.unwrap() else { panic!() };
+        let Message::Request(prompt_req) = agent.recv().await.unwrap() else {
+            panic!()
+        };
         agent
             .send(Message::Request(Request::new(
                 RequestId::Number(42),
@@ -363,10 +380,11 @@ async fn agent_fs_read_dispatch() {
                 ),
             )))
             .await;
-        let Message::Response(r) = agent.recv().await.unwrap() else { panic!() };
+        let Message::Response(r) = agent.recv().await.unwrap() else {
+            panic!()
+        };
         assert_eq!(r.id, RequestId::Number(42));
-        let result: ReadTextFileResult =
-            serde_json::from_value(r.result.unwrap()).unwrap();
+        let result: ReadTextFileResult = serde_json::from_value(r.result.unwrap()).unwrap();
         assert_eq!(result.content, "file-contents");
         agent
             .reply(
@@ -399,8 +417,12 @@ async fn multiple_in_flight_requests() {
     let agent = h.agent.clone();
     // Collect both requests, reply out of order.
     tokio::spawn(async move {
-        let Message::Request(req1) = agent.recv().await.unwrap() else { panic!() };
-        let Message::Request(req2) = agent.recv().await.unwrap() else { panic!() };
+        let Message::Request(req1) = agent.recv().await.unwrap() else {
+            panic!()
+        };
+        let Message::Request(req2) = agent.recv().await.unwrap() else {
+            panic!()
+        };
         // Reply to #2 first.
         agent
             .reply(
@@ -537,8 +559,15 @@ async fn auth_env_token_short_circuits() {
         std::env::set_var("GH_TOKEN", "test-token");
     }
     let h = harness(Default::default()).await;
-    let strat = h.client.authenticate(&["api_key".to_string()]).await.unwrap();
-    assert!(matches!(strat, devdev_acp::AuthStrategy::EnvToken("GH_TOKEN")));
+    let strat = h
+        .client
+        .authenticate(&["api_key".to_string()])
+        .await
+        .unwrap();
+    assert!(matches!(
+        strat,
+        devdev_acp::AuthStrategy::EnvToken("GH_TOKEN")
+    ));
     unsafe {
         std::env::remove_var("GH_TOKEN");
     }
@@ -569,10 +598,15 @@ async fn agent_unknown_method_gets_error() {
     });
     // Read the response the client sent back.
     let msg = h.agent.recv().await.unwrap();
-    let Message::Response(r) = msg else { panic!("expected response, got {msg:?}") };
+    let Message::Response(r) = msg else {
+        panic!("expected response, got {msg:?}")
+    };
     assert_eq!(r.id, RequestId::Number(7));
     let err = r.error.unwrap();
-    assert_eq!(err.code, devdev_acp::protocol::error_codes::METHOD_NOT_FOUND);
+    assert_eq!(
+        err.code,
+        devdev_acp::protocol::error_codes::METHOD_NOT_FOUND
+    );
 }
 
 /// Sanity: the request id counter actually increments.
@@ -582,7 +616,9 @@ async fn request_ids_increment() {
     let agent = h.agent.clone();
     tokio::spawn(async move {
         for _ in 0..3 {
-            let Message::Request(req) = agent.recv().await.unwrap() else { panic!() };
+            let Message::Request(req) = agent.recv().await.unwrap() else {
+                panic!()
+            };
             agent
                 .reply(
                     req.id,

@@ -54,12 +54,14 @@ fn node_stat_probe_against_mounted_winfsp_drive() {
         g.write_path(b"/workspace/hello.txt", b"hi\n").unwrap();
     }
     let mp = mount.display().to_string();
-    let root = if mp.ends_with(':') { format!("{mp}\\") } else { mp.clone() };
+    let root = if mp.ends_with(':') {
+        format!("{mp}\\")
+    } else {
+        mp.clone()
+    };
     let subdir = format!("{root}workspace");
     let subfile = format!("{root}workspace\\hello.txt");
-    eprintln!(
-        "[diag] mount={root:?} subdir={subdir:?} subfile={subfile:?}"
-    );
+    eprintln!("[diag] mount={root:?} subdir={subdir:?} subfile={subfile:?}");
 
     // Run a compact Node probe. Everything captured as JSON so we
     // can grep the log for the exact failing operation + errno.

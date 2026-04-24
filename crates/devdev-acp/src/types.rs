@@ -297,7 +297,9 @@ pub struct PermissionResponse {
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum PermissionOutcome {
     #[serde(rename_all = "camelCase")]
-    Selected { option_id: String },
+    Selected {
+        option_id: String,
+    },
     Cancelled,
 }
 

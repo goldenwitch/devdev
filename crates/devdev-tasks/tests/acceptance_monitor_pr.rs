@@ -3,7 +3,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use devdev_integrations::{MockGitHubAdapter, PrState, PullRequest, PrStatus};
+use devdev_integrations::{MockGitHubAdapter, PrState, PrStatus, PullRequest};
 use devdev_tasks::approval::{self, ApprovalPolicy, ApprovalResponse};
 use devdev_tasks::monitor_pr::{MonitorPrTask, ReviewFn};
 use devdev_tasks::pr_ref::PrRef;
@@ -38,8 +38,21 @@ fn fake_review_fn() -> ReviewFn {
 fn mock_github(sha: &str) -> MockGitHubAdapter {
     MockGitHubAdapter::new()
         .with_pr("org", "repo", mock_pr(247, sha))
-        .with_diff("org", "repo", 247, "diff --git a/src/config.rs\n+fn parse()")
-        .with_status("org", "repo", 247, PrStatus { mergeable: Some(true), checks: vec![] })
+        .with_diff(
+            "org",
+            "repo",
+            247,
+            "diff --git a/src/config.rs\n+fn parse()",
+        )
+        .with_status(
+            "org",
+            "repo",
+            247,
+            PrStatus {
+                mergeable: Some(true),
+                checks: vec![],
+            },
+        )
 }
 
 // ── PR ref parsing ─────────────────────────────────────────────
@@ -102,17 +115,12 @@ fn parse_mixed() {
 #[tokio::test]
 async fn first_poll_loads_and_reviews() {
     let github: Arc<dyn devdev_integrations::GitHubAdapter> = Arc::new(mock_github("abc123"));
-    let (gate, _handle) = approval::approval_channel(ApprovalPolicy::AutoApprove, Duration::from_secs(5));
+    let (gate, _handle) =
+        approval::approval_channel(ApprovalPolicy::AutoApprove, Duration::from_secs(5));
     let gate = Arc::new(Mutex::new(gate));
 
-    let mut task = MonitorPrTask::new(
-        "t-1".into(),
-        "org/repo#247",
-        github,
-        gate,
-        fake_review_fn(),
-    )
-    .unwrap();
+    let mut task =
+        MonitorPrTask::new("t-1".into(), "org/repo#247", github, gate, fake_review_fn()).unwrap();
 
     let msgs = task.poll().await.unwrap();
     assert!(!msgs.is_empty());
@@ -121,18 +129,14 @@ async fn first_poll_loads_and_reviews() {
 #[tokio::test]
 async fn first_poll_posts_review_when_approved() {
     let gh = Arc::new(mock_github("abc123"));
-    let github: Arc<dyn devdev_integrations::GitHubAdapter> = Arc::clone(&gh) as Arc<dyn devdev_integrations::GitHubAdapter>;
-    let (gate, _handle) = approval::approval_channel(ApprovalPolicy::AutoApprove, Duration::from_secs(5));
+    let github: Arc<dyn devdev_integrations::GitHubAdapter> =
+        Arc::clone(&gh) as Arc<dyn devdev_integrations::GitHubAdapter>;
+    let (gate, _handle) =
+        approval::approval_channel(ApprovalPolicy::AutoApprove, Duration::from_secs(5));
     let gate = Arc::new(Mutex::new(gate));
 
-    let mut task = MonitorPrTask::new(
-        "t-1".into(),
-        "org/repo#247",
-        github,
-        gate,
-        fake_review_fn(),
-    )
-    .unwrap();
+    let mut task =
+        MonitorPrTask::new("t-1".into(), "org/repo#247", github, gate, fake_review_fn()).unwrap();
 
     let _msgs = task.poll().await.unwrap();
     assert!(!gh.posted_reviews().is_empty());
@@ -141,8 +145,10 @@ async fn first_poll_posts_review_when_approved() {
 #[tokio::test]
 async fn first_poll_skips_post_when_rejected() {
     let gh = Arc::new(mock_github("abc123"));
-    let github: Arc<dyn devdev_integrations::GitHubAdapter> = Arc::clone(&gh) as Arc<dyn devdev_integrations::GitHubAdapter>;
-    let (gate, mut handle) = approval::approval_channel(ApprovalPolicy::Ask, Duration::from_secs(5));
+    let github: Arc<dyn devdev_integrations::GitHubAdapter> =
+        Arc::clone(&gh) as Arc<dyn devdev_integrations::GitHubAdapter>;
+    let (gate, mut handle) =
+        approval::approval_channel(ApprovalPolicy::Ask, Duration::from_secs(5));
     let gate = Arc::new(Mutex::new(gate));
 
     // Respond with reject in background.
@@ -150,19 +156,16 @@ async fn first_poll_skips_post_when_rejected() {
         let req = handle.request_rx.recv().await.unwrap();
         handle
             .response_tx
-            .send(ApprovalResponse { id: req.id, approve: false })
+            .send(ApprovalResponse {
+                id: req.id,
+                approve: false,
+            })
             .await
             .unwrap();
     });
 
-    let mut task = MonitorPrTask::new(
-        "t-1".into(),
-        "org/repo#247",
-        github,
-        gate,
-        fake_review_fn(),
-    )
-    .unwrap();
+    let mut task =
+        MonitorPrTask::new("t-1".into(), "org/repo#247", github, gate, fake_review_fn()).unwrap();
 
     let msgs = task.poll().await.unwrap();
     assert!(!msgs.is_empty()); // Should have "rejected" message.
@@ -172,17 +175,12 @@ async fn first_poll_skips_post_when_rejected() {
 #[tokio::test]
 async fn subsequent_poll_no_change_quiet() {
     let github: Arc<dyn devdev_integrations::GitHubAdapter> = Arc::new(mock_github("abc123"));
-    let (gate, _handle) = approval::approval_channel(ApprovalPolicy::AutoApprove, Duration::from_secs(5));
+    let (gate, _handle) =
+        approval::approval_channel(ApprovalPolicy::AutoApprove, Duration::from_secs(5));
     let gate = Arc::new(Mutex::new(gate));
 
-    let mut task = MonitorPrTask::new(
-        "t-1".into(),
-        "org/repo#247",
-        github,
-        gate,
-        fake_review_fn(),
-    )
-    .unwrap();
+    let mut task =
+        MonitorPrTask::new("t-1".into(), "org/repo#247", github, gate, fake_review_fn()).unwrap();
 
     // First poll — does review.
     let _msgs = task.poll().await.unwrap();
@@ -204,19 +202,22 @@ async fn pr_merged_transitions_to_completed() {
         MockGitHubAdapter::new()
             .with_pr("org", "repo", pr)
             .with_diff("org", "repo", 247, "")
-            .with_status("org", "repo", 247, PrStatus { mergeable: None, checks: vec![] }),
+            .with_status(
+                "org",
+                "repo",
+                247,
+                PrStatus {
+                    mergeable: None,
+                    checks: vec![],
+                },
+            ),
     );
-    let (gate, _handle) = approval::approval_channel(ApprovalPolicy::AutoApprove, Duration::from_secs(5));
+    let (gate, _handle) =
+        approval::approval_channel(ApprovalPolicy::AutoApprove, Duration::from_secs(5));
     let gate = Arc::new(Mutex::new(gate));
 
-    let mut task = MonitorPrTask::new(
-        "t-1".into(),
-        "org/repo#247",
-        github,
-        gate,
-        fake_review_fn(),
-    )
-    .unwrap();
+    let mut task =
+        MonitorPrTask::new("t-1".into(), "org/repo#247", github, gate, fake_review_fn()).unwrap();
 
     let msgs = task.poll().await.unwrap();
     assert!(!msgs.is_empty());
@@ -226,17 +227,12 @@ async fn pr_merged_transitions_to_completed() {
 #[tokio::test]
 async fn serialize_deserialize_roundtrip() {
     let github: Arc<dyn devdev_integrations::GitHubAdapter> = Arc::new(mock_github("abc123"));
-    let (gate, _handle) = approval::approval_channel(ApprovalPolicy::AutoApprove, Duration::from_secs(5));
+    let (gate, _handle) =
+        approval::approval_channel(ApprovalPolicy::AutoApprove, Duration::from_secs(5));
     let gate = Arc::new(Mutex::new(gate));
 
-    let task = MonitorPrTask::new(
-        "t-1".into(),
-        "org/repo#247",
-        github,
-        gate,
-        fake_review_fn(),
-    )
-    .unwrap();
+    let task =
+        MonitorPrTask::new("t-1".into(), "org/repo#247", github, gate, fake_review_fn()).unwrap();
 
     let data = task.serialize().unwrap();
     assert_eq!(data["id"], "t-1");
@@ -248,18 +244,14 @@ async fn serialize_deserialize_roundtrip() {
 #[tokio::test]
 async fn dry_run_never_posts() {
     let gh = Arc::new(mock_github("abc123"));
-    let github: Arc<dyn devdev_integrations::GitHubAdapter> = Arc::clone(&gh) as Arc<dyn devdev_integrations::GitHubAdapter>;
-    let (gate, _handle) = approval::approval_channel(ApprovalPolicy::DryRun, Duration::from_secs(5));
+    let github: Arc<dyn devdev_integrations::GitHubAdapter> =
+        Arc::clone(&gh) as Arc<dyn devdev_integrations::GitHubAdapter>;
+    let (gate, _handle) =
+        approval::approval_channel(ApprovalPolicy::DryRun, Duration::from_secs(5));
     let gate = Arc::new(Mutex::new(gate));
 
-    let mut task = MonitorPrTask::new(
-        "t-1".into(),
-        "org/repo#247",
-        github,
-        gate,
-        fake_review_fn(),
-    )
-    .unwrap();
+    let mut task =
+        MonitorPrTask::new("t-1".into(), "org/repo#247", github, gate, fake_review_fn()).unwrap();
 
     let msgs = task.poll().await.unwrap();
     assert!(!msgs.is_empty());

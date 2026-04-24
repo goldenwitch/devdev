@@ -64,11 +64,7 @@ pub trait McpToolProvider: Send + Sync {
     /// implementation returns an error so `StaticProvider` and other
     /// read-only providers fail loudly rather than silently dropping
     /// writes.
-    async fn fs_write(
-        &self,
-        _path: String,
-        _content: String,
-    ) -> Result<(), McpProviderError> {
+    async fn fs_write(&self, _path: String, _content: String) -> Result<(), McpProviderError> {
         Err(McpProviderError::Other(
             "fs_write not supported by this provider".into(),
         ))
@@ -126,13 +122,11 @@ impl DevDevMcpHandler {
         Ok(CallToolResult::success(vec![Content::text(text)]))
     }
 
-    #[tool(
-        description = "Write UTF-8 text to a file in the DevDev workspace \
+    #[tool(description = "Write UTF-8 text to a file in the DevDev workspace \
          filesystem. `path` is an absolute VFS path (e.g. `/notes/hello.txt`); \
          missing parent directories are created automatically. An existing \
          file is truncated. Use this to create or overwrite files when the \
-         user asks you to write into the DevDev workspace."
-    )]
+         user asks you to write into the DevDev workspace.")]
     async fn devdev_fs_write(
         &self,
         rmcp::handler::server::wrapper::Parameters(args): rmcp::handler::server::wrapper::Parameters<

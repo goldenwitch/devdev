@@ -50,11 +50,7 @@ impl McpToolProvider for DaemonToolProvider {
         Ok(out)
     }
 
-    async fn fs_write(
-        &self,
-        path: String,
-        content: String,
-    ) -> Result<(), McpProviderError> {
+    async fn fs_write(&self, path: String, content: String) -> Result<(), McpProviderError> {
         if !path.starts_with('/') {
             return Err(McpProviderError::Other(format!(
                 "path must be absolute (start with '/'): {path}"

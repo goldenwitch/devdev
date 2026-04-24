@@ -39,9 +39,9 @@ impl PrRef {
             )));
         };
 
-        let number: u64 = number_str.parse().map_err(|_| {
-            TaskError::PollFailed(format!("invalid PR number: {number_str}"))
-        })?;
+        let number: u64 = number_str
+            .parse()
+            .map_err(|_| TaskError::PollFailed(format!("invalid PR number: {number_str}")))?;
 
         if owner.is_empty() || repo.is_empty() || number == 0 {
             return Err(TaskError::PollFailed(format!(
@@ -61,9 +61,7 @@ impl PrRef {
         let path = input
             .strip_prefix("https://github.com/")
             .or_else(|| input.strip_prefix("http://github.com/"))
-            .ok_or_else(|| {
-                TaskError::PollFailed(format!("unsupported URL host: {input}"))
-            })?;
+            .ok_or_else(|| TaskError::PollFailed(format!("unsupported URL host: {input}")))?;
 
         // Expected: owner/repo/pull/123
         let parts: Vec<&str> = path.split('/').collect();
@@ -80,9 +78,7 @@ impl PrRef {
         })?;
 
         if owner.is_empty() || repo.is_empty() || number == 0 {
-            return Err(TaskError::PollFailed(format!(
-                "invalid PR URL: {input}"
-            )));
+            return Err(TaskError::PollFailed(format!("invalid PR URL: {input}")));
         }
 
         Ok(Self {

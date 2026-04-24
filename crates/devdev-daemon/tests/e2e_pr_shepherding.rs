@@ -16,7 +16,7 @@ use devdev_tasks::approval::{self, ApprovalPolicy};
 use devdev_tasks::monitor_pr::ReviewFn;
 use devdev_tasks::registry::TaskRegistry;
 use serde_json::json;
-use tokio::sync::{mpsc, watch, Mutex};
+use tokio::sync::{Mutex, mpsc, watch};
 
 // ── Fake Agent Backend ─────────────────────────────────────────
 
@@ -135,8 +135,14 @@ fn fake_review_fn(router: Arc<SessionRouter>) -> ReviewFn {
     Arc::new(move |prompt| {
         let router = Arc::clone(&router);
         Box::pin(async move {
-            let handle = router.create_interactive_session().await.map_err(|e| e.to_string())?;
-            let resp = handle.send_prompt(&prompt).await.map_err(|e| e.to_string())?;
+            let handle = router
+                .create_interactive_session()
+                .await
+                .map_err(|e| e.to_string())?;
+            let resp = handle
+                .send_prompt(&prompt)
+                .await
+                .map_err(|e| e.to_string())?;
             Ok(resp.text)
         })
     })
@@ -183,16 +189,19 @@ impl E2EHarness {
 
         let review_fn = fake_review_fn(Arc::clone(&router));
 
-        let ctx = Arc::new(DispatchContext::new(
-            Arc::clone(&router),
-            Arc::clone(&registry),
-            github,
-            approval_handle,
-            review_fn,
-            policy,
-            shutdown_tx.clone(),
-            Arc::new(Mutex::new(devdev_workspace::Fs::new())),
-        ).with_approval_timeout(Duration::from_secs(2)));
+        let ctx = Arc::new(
+            DispatchContext::new(
+                Arc::clone(&router),
+                Arc::clone(&registry),
+                github,
+                approval_handle,
+                review_fn,
+                policy,
+                shutdown_tx.clone(),
+                Arc::new(Mutex::new(devdev_workspace::Fs::new())),
+            )
+            .with_approval_timeout(Duration::from_secs(2)),
+        );
 
         let server = IpcServer::bind().await.unwrap();
         let port = server.port();
@@ -242,9 +251,21 @@ async fn e2e_interactive_pr_monitoring() {
     let harness = E2EHarness::new().await;
 
     // User sends a message to trigger PR monitoring via interactive session.
-    let resp = raw_ipc(harness.port, "send", json!({"text": "Please review PR test-org/test-repo#1"})).await;
-    assert!(resp.error.is_none(), "send should succeed: {:?}", resp.error);
-    let response_text = resp.result.unwrap()["response"].as_str().unwrap().to_string();
+    let resp = raw_ipc(
+        harness.port,
+        "send",
+        json!({"text": "Please review PR test-org/test-repo#1"}),
+    )
+    .await;
+    assert!(
+        resp.error.is_none(),
+        "send should succeed: {:?}",
+        resp.error
+    );
+    let response_text = resp.result.unwrap()["response"]
+        .as_str()
+        .unwrap()
+        .to_string();
     assert!(!response_text.is_empty());
 
     // Check status.
@@ -261,13 +282,24 @@ async fn e2e_headless_auto_approve() {
     let harness = E2EHarness::new_with_policy(ApprovalPolicy::AutoApprove).await;
 
     // Create task via IPC.
-    let add_resp = raw_ipc(harness.port, "task/add", json!({
-        "description": "Monitor PR test-org/test-repo#1",
-        "auto_approve": true
-    }))
+    let add_resp = raw_ipc(
+        harness.port,
+        "task/add",
+        json!({
+            "description": "Monitor PR test-org/test-repo#1",
+            "auto_approve": true
+        }),
+    )
     .await;
-    assert!(add_resp.error.is_none(), "task/add failed: {:?}", add_resp.error);
-    let task_id = add_resp.result.unwrap()["task_id"].as_str().unwrap().to_string();
+    assert!(
+        add_resp.error.is_none(),
+        "task/add failed: {:?}",
+        add_resp.error
+    );
+    let task_id = add_resp.result.unwrap()["task_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
 
     // Poll tasks to trigger review.
     harness.advance_polls(1).await;
@@ -298,7 +330,12 @@ async fn e2e_one_shot_review() {
     let harness = E2EHarness::new_with_policy(ApprovalPolicy::AutoApprove).await;
 
     // Send a one-shot review request.
-    let resp = raw_ipc(harness.port, "send", json!({"text": "Review PR test-org/test-repo#1"})).await;
+    let resp = raw_ipc(
+        harness.port,
+        "send",
+        json!({"text": "Review PR test-org/test-repo#1"}),
+    )
+    .await;
     assert!(resp.error.is_none());
     let result = resp.result.unwrap();
     let response_text = result["response"].as_str().unwrap();
@@ -358,10 +395,14 @@ async fn e2e_headless_approval_protocol() {
     let harness = E2EHarness::new_with_policy(ApprovalPolicy::Ask).await;
 
     // Create task that requires approval (short timeout so test doesn't hang).
-    let add_resp = raw_ipc(harness.port, "task/add", json!({
-        "description": "Monitor PR test-org/test-repo#1",
-        "auto_approve": false
-    }))
+    let add_resp = raw_ipc(
+        harness.port,
+        "task/add",
+        json!({
+            "description": "Monitor PR test-org/test-repo#1",
+            "auto_approve": false
+        }),
+    )
     .await;
     assert!(add_resp.error.is_none());
 
@@ -372,7 +413,10 @@ async fn e2e_headless_approval_protocol() {
     // But the log should still have an entry about the timeout.
     let log = raw_ipc(harness.port, "task/log", json!({"task_id": "t-1"})).await;
     let entries = log.result.unwrap()["entries"].as_array().unwrap().clone();
-    assert!(!entries.is_empty(), "should have log entry about approval timeout");
+    assert!(
+        !entries.is_empty(),
+        "should have log entry about approval timeout"
+    );
 
     harness.stop().await;
 }
@@ -384,9 +428,13 @@ async fn e2e_dry_run_no_side_effects() {
     let harness = E2EHarness::new_with_policy(ApprovalPolicy::DryRun).await;
 
     // Create task with dry-run policy.
-    let add_resp = raw_ipc(harness.port, "task/add", json!({
-        "description": "Monitor PR test-org/test-repo#1"
-    }))
+    let add_resp = raw_ipc(
+        harness.port,
+        "task/add",
+        json!({
+            "description": "Monitor PR test-org/test-repo#1"
+        }),
+    )
     .await;
     assert!(add_resp.error.is_none());
 
@@ -425,10 +473,14 @@ async fn e2e_new_push_triggers_rereview() {
     let harness = E2EHarness::new_with_policy(ApprovalPolicy::AutoApprove).await;
 
     // Add task.
-    let add_resp = raw_ipc(harness.port, "task/add", json!({
-        "description": "Monitor PR test-org/test-repo#1",
-        "auto_approve": true
-    }))
+    let add_resp = raw_ipc(
+        harness.port,
+        "task/add",
+        json!({
+            "description": "Monitor PR test-org/test-repo#1",
+            "auto_approve": true
+        }),
+    )
     .await;
     assert!(add_resp.error.is_none());
 
@@ -450,7 +502,9 @@ async fn e2e_new_push_triggers_rereview() {
     assert_eq!(harness.github.posted_reviews().len(), reviews_after_first);
 
     // Simulate new push.
-    harness.github.update_head_sha("test-org", "test-repo", 1, "sha-new-push-002");
+    harness
+        .github
+        .update_head_sha("test-org", "test-repo", 1, "sha-new-push-002");
 
     // Poll again — should detect new SHA and re-review.
     harness.advance_polls(1).await;

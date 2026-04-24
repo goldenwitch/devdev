@@ -55,8 +55,8 @@ impl<W: AsyncWrite + Unpin> AsyncNdjsonWriter<W> {
     }
 
     pub async fn send(&mut self, msg: &Message) -> io::Result<()> {
-        let mut json = serde_json::to_vec(msg)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        let mut json =
+            serde_json::to_vec(msg).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
         json.push(b'\n');
         self.writer.write_all(&json).await?;
         self.writer.flush().await

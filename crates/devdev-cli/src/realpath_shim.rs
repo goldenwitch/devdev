@@ -121,10 +121,10 @@ pub fn prepare_nodejs_options() -> Vec<(String, String)> {
     let mut result = vec![("NODE_OPTIONS".to_string(), combined)];
     // If the caller pre-set a log path in our own process, propagate it
     // so the shim writes there. Tests set this to collect shim diagnostics.
-    if let Ok(log) = std::env::var("DEVDEV_SHIM_LOG") {
-        if !log.is_empty() {
-            result.push(("DEVDEV_SHIM_LOG".to_string(), log));
-        }
+    if let Ok(log) = std::env::var("DEVDEV_SHIM_LOG")
+        && !log.is_empty()
+    {
+        result.push(("DEVDEV_SHIM_LOG".to_string(), log));
     }
     result
 }
@@ -146,10 +146,7 @@ pub fn prepare_nodejs_options() -> Vec<(String, String)> {
 /// NODE_OPTIONS injection. Returns `None` on non-Windows hosts or when
 /// the program is not recognizable as a Copilot launcher, so callers
 /// can leave the invocation unchanged in that case.
-pub fn rewrite_copilot_invocation(
-    program: &str,
-    args: &[String],
-) -> Option<(String, Vec<String>)> {
+pub fn rewrite_copilot_invocation(program: &str, args: &[String]) -> Option<(String, Vec<String>)> {
     if !cfg!(target_os = "windows") {
         return None;
     }

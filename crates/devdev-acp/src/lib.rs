@@ -20,6 +20,8 @@ pub use client::{
 pub use handler::{AcpHandler, HandlerResult};
 pub use ndjson::{NdjsonReader, NdjsonWriter};
 pub use protocol::{Message, Notification, Request, RequestId, Response, RpcError};
-pub use trace::{CollectingTraceLogger, NoopTraceLogger, TraceEvent, TraceLogger, TracingTraceLogger};
+pub use trace::{
+    CollectingTraceLogger, NoopTraceLogger, TraceEvent, TraceLogger, TracingTraceLogger,
+};
 pub use transport::{AsyncNdjsonReader, AsyncNdjsonWriter};
 pub use types::*;

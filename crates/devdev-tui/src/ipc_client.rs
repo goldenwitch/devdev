@@ -40,9 +40,7 @@ pub enum DaemonEvent {
 impl DaemonEvent {
     /// Parse a daemon event from a JSON value.
     pub fn from_json(val: &serde_json::Value) -> Result<Self, ConnectError> {
-        let event_type = val["type"]
-            .as_str()
-            .unwrap_or("unknown");
+        let event_type = val["type"].as_str().unwrap_or("unknown");
 
         match event_type {
             "agent_text" => Ok(DaemonEvent::AgentText {
@@ -105,8 +103,7 @@ pub struct DaemonConnection {
 impl DaemonConnection {
     /// Connect to the running daemon by reading the port file.
     pub async fn connect(data_dir: &Path) -> Result<Self, ConnectError> {
-        let port = ipc::read_port(data_dir)?
-            .ok_or(ConnectError::NotRunning)?;
+        let port = ipc::read_port(data_dir)?.ok_or(ConnectError::NotRunning)?;
 
         let client = IpcClient::connect(port).await?;
         Ok(Self { client })
@@ -129,10 +126,7 @@ impl DaemonConnection {
     /// Send an approval response.
     pub async fn send_approval(&mut self, approve: bool) -> Result<IpcResponse, ConnectError> {
         self.client
-            .request(
-                "approval_response",
-                serde_json::json!({"approve": approve}),
-            )
+            .request("approval_response", serde_json::json!({"approve": approve}))
             .await
             .map_err(ConnectError::Io)
     }

@@ -4,8 +4,8 @@
 //! behind DEVDEV_E2E (not run in CI).
 
 use devdev_integrations::{
-    CheckRun, Comment, GitHubAdapter, GitHubError, MockGitHubAdapter,
-    PrState, PrStatus, PullRequest, Review, ReviewComment, ReviewEvent,
+    CheckRun, Comment, GitHubAdapter, GitHubError, MockGitHubAdapter, PrState, PrStatus,
+    PullRequest, Review, ReviewComment, ReviewEvent,
 };
 
 fn sample_pr() -> PullRequest {
@@ -28,8 +28,7 @@ fn sample_pr() -> PullRequest {
 
 #[tokio::test]
 async fn mock_returns_configured_pr() {
-    let adapter = MockGitHubAdapter::new()
-        .with_pr("org", "repo", sample_pr());
+    let adapter = MockGitHubAdapter::new().with_pr("org", "repo", sample_pr());
 
     let pr = adapter.get_pr("org", "repo", 42).await.unwrap();
     assert_eq!(pr.number, 42);
@@ -52,9 +51,9 @@ async fn mock_get_pr_not_found() {
 
 #[tokio::test]
 async fn mock_get_pr_diff_returns_diff() {
-    let diff = "diff --git a/file.rs b/file.rs\n--- a/file.rs\n+++ b/file.rs\n@@ -1 +1 @@\n-old\n+new\n";
-    let adapter = MockGitHubAdapter::new()
-        .with_diff("org", "repo", 42, diff);
+    let diff =
+        "diff --git a/file.rs b/file.rs\n--- a/file.rs\n+++ b/file.rs\n@@ -1 +1 @@\n-old\n+new\n";
+    let adapter = MockGitHubAdapter::new().with_diff("org", "repo", 42, diff);
 
     let result = adapter.get_pr_diff("org", "repo", 42).await.unwrap();
     assert_eq!(result, diff);
@@ -82,8 +81,7 @@ async fn mock_list_comments() {
             created_at: "2025-01-01T01:00:00Z".into(),
         },
     ];
-    let adapter = MockGitHubAdapter::new()
-        .with_comments("org", "repo", 42, comments);
+    let adapter = MockGitHubAdapter::new().with_comments("org", "repo", 42, comments);
 
     let result = adapter.list_pr_comments("org", "repo", 42).await.unwrap();
     assert_eq!(result.len(), 2);
@@ -156,8 +154,7 @@ async fn mock_records_posted_comments() {
 
 #[tokio::test]
 async fn mock_get_pr_head_sha() {
-    let adapter = MockGitHubAdapter::new()
-        .with_pr("org", "repo", sample_pr());
+    let adapter = MockGitHubAdapter::new().with_pr("org", "repo", sample_pr());
 
     let sha = adapter.get_pr_head_sha("org", "repo", 42).await.unwrap();
     assert_eq!(sha, "abc123");
@@ -183,8 +180,7 @@ async fn mock_get_pr_status() {
         ],
     };
 
-    let adapter = MockGitHubAdapter::new()
-        .with_status("org", "repo", 42, status);
+    let adapter = MockGitHubAdapter::new().with_status("org", "repo", 42, status);
 
     let result = adapter.get_pr_status("org", "repo", 42).await.unwrap();
     assert_eq!(result.mergeable, Some(true));
@@ -207,7 +203,11 @@ async fn mock_diff_not_found() {
 #[tokio::test]
 async fn mock_status_not_found() {
     let adapter = MockGitHubAdapter::new();
-    let err = adapter.get_pr_status("org", "repo", 99).await.err().unwrap();
+    let err = adapter
+        .get_pr_status("org", "repo", 99)
+        .await
+        .err()
+        .unwrap();
     assert!(matches!(err, GitHubError::NotFound(_)));
 }
 

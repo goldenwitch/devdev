@@ -118,9 +118,8 @@ impl WinFspDriver {
             .encode_wide()
             .chain(std::iter::once(0))
             .collect();
-        let status = unsafe {
-            ffi::FspFileSystemSetMountPoint(handle, mount_wide.as_ptr() as ffi::PWSTR)
-        };
+        let status =
+            unsafe { ffi::FspFileSystemSetMountPoint(handle, mount_wide.as_ptr() as ffi::PWSTR) };
         if status != ffi::STATUS_SUCCESS {
             unsafe { ffi::FspFileSystemDelete(handle) };
             return Err(DriverError::Mount(format!(
@@ -446,8 +445,7 @@ unsafe extern "system" fn cb_get_security_by_name(
     let Some(path) = pwstr_to_fs_path(file_name) else {
         return ffi::STATUS_INVALID_PARAMETER;
     };
-    let attr_result =
-        with_fs(fs, |g| g.resolve(&path).and_then(|ino| g.getattr(ino)));
+    let attr_result = with_fs(fs, |g| g.resolve(&path).and_then(|ino| g.getattr(ino)));
     let attr = match attr_result {
         Ok(a) => a,
         Err(e) => return errno_to_ntstatus(e),
@@ -783,8 +781,7 @@ unsafe extern "system" fn cb_rename(
     new_file_name: ffi::PWSTR,
     _replace: ffi::BOOLEAN,
 ) -> ffi::NTSTATUS {
-    let (Some(src), Some(dst)) =
-        (pwstr_to_fs_path(file_name), pwstr_to_fs_path(new_file_name))
+    let (Some(src), Some(dst)) = (pwstr_to_fs_path(file_name), pwstr_to_fs_path(new_file_name))
     else {
         return ffi::STATUS_INVALID_PARAMETER;
     };
@@ -831,10 +828,7 @@ unsafe extern "system" fn cb_read_directory(
 
     // Pre-fetch attrs so we don't re-lock the mutex per entry.
     let attrs: Vec<_> = with_fs(fs, |g| {
-        entries
-            .iter()
-            .map(|e| g.getattr(e.ino).ok())
-            .collect()
+        entries.iter().map(|e| g.getattr(e.ino).ok()).collect()
     });
 
     let mut past_marker = marker_bytes.is_none();
@@ -861,8 +855,7 @@ unsafe extern "system" fn cb_read_directory(
             fill_file_info(attr, &mut (*di).FileInfo);
             let name_dst = scratch.as_mut_ptr().add(header_size) as *mut u16;
             std::ptr::copy_nonoverlapping(name_wide.as_ptr(), name_dst, name_wide.len());
-            let cont =
-                ffi::FspFileSystemAddDirInfo(di, buffer, length, p_bytes_transferred);
+            let cont = ffi::FspFileSystemAddDirInfo(di, buffer, length, p_bytes_transferred);
             if cont == 0 {
                 return ffi::STATUS_SUCCESS;
             }

@@ -26,17 +26,17 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use clap::Parser;
-use tokio::sync::{watch, Mutex};
+use tokio::sync::{Mutex, watch};
 
 use devdev_daemon::dispatch::DispatchContext;
-use devdev_daemon::ipc::{read_port, IpcClient, IpcServer};
+use devdev_daemon::ipc::{IpcClient, IpcServer, read_port};
 use devdev_daemon::mcp::{DaemonToolProvider, McpServer};
 use devdev_daemon::router::SessionRouter;
-use devdev_daemon::{server, Daemon, DaemonConfig, DaemonError};
+use devdev_daemon::{Daemon, DaemonConfig, DaemonError, server};
 use devdev_integrations::{GitHubAdapter, LiveGitHubAdapter, MockGitHubAdapter};
-use devdev_tasks::approval::{approval_channel, ApprovalPolicy};
+use devdev_tasks::approval::{ApprovalPolicy, approval_channel};
 use devdev_tasks::monitor_pr::ReviewFn;
 use devdev_tasks::registry::TaskRegistry;
 
@@ -142,7 +142,12 @@ fn placeholder_review_fn() -> ReviewFn {
 async fn connect_ipc(data_dir: &Path) -> Result<IpcClient> {
     let port = read_port(data_dir)
         .with_context(|| format!("reading port file in {}", data_dir.display()))?
-        .ok_or_else(|| anyhow!("daemon not running (no port file in {})", data_dir.display()))?;
+        .ok_or_else(|| {
+            anyhow!(
+                "daemon not running (no port file in {})",
+                data_dir.display()
+            )
+        })?;
     IpcClient::connect(port)
         .await
         .with_context(|| format!("connecting to daemon on port {port}"))

@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{Mutex, mpsc};
 
 /// Error type for router operations.
 #[derive(thiserror::Error, Debug)]
@@ -77,11 +77,8 @@ pub trait SessionBackend: Send + Sync {
     async fn create_session(&self, cwd: &str) -> Result<String, RouterError>;
 
     /// Send a prompt to an existing session.
-    async fn send_prompt(
-        &self,
-        session_id: &str,
-        text: &str,
-    ) -> Result<AgentResponse, RouterError>;
+    async fn send_prompt(&self, session_id: &str, text: &str)
+    -> Result<AgentResponse, RouterError>;
 
     /// Send a prompt and stream response chunks.
     async fn send_prompt_streaming(
@@ -127,9 +124,7 @@ impl SessionRouter {
         // Inject context if any.
         let initial = context.initial_prompt();
         if !initial.is_empty() {
-            self.backend
-                .send_prompt(&session_id, &initial)
-                .await?;
+            self.backend.send_prompt(&session_id, &initial).await?;
         }
 
         sessions.insert(
@@ -197,9 +192,7 @@ impl SessionRouter {
             // Re-inject context.
             let initial = state.context.initial_prompt();
             if !initial.is_empty() {
-                self.backend
-                    .send_prompt(&new_session_id, &initial)
-                    .await?;
+                self.backend.send_prompt(&new_session_id, &initial).await?;
             }
 
             new_sessions.insert(
@@ -241,9 +234,7 @@ impl SessionHandle {
         let text = text.to_string();
 
         tokio::spawn(async move {
-            let _ = backend
-                .send_prompt_streaming(&session_id, &text, tx)
-                .await;
+            let _ = backend.send_prompt_streaming(&session_id, &text, tx).await;
         });
 
         Ok(rx)

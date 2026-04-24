@@ -1,7 +1,7 @@
 //! Acceptance tests for P2-04 — Task Manager & Approval Gate.
 
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 use devdev_tasks::approval::{self, ApprovalError, ApprovalPolicy, ApprovalResponse};
@@ -109,7 +109,9 @@ impl Task for MockTask {
             && count >= max
         {
             self.status = TaskStatus::Completed;
-            return Ok(vec![TaskMessage::Text(format!("completed after {count} polls"))]);
+            return Ok(vec![TaskMessage::Text(format!(
+                "completed after {count} polls"
+            ))]);
         }
 
         Ok(vec![TaskMessage::Text(format!("poll #{count}"))])
@@ -178,9 +180,7 @@ async fn task_poll_updates_status() {
     let (tx, rx) = tokio::sync::watch::channel(false);
 
     // Run scheduler briefly.
-    let sched_handle = tokio::spawn(async move {
-        scheduler.run(rx).await
-    });
+    let sched_handle = tokio::spawn(async move { scheduler.run(rx).await });
 
     // Wait for at least one poll.
     tokio::time::sleep(Duration::from_millis(200)).await;
@@ -245,10 +245,8 @@ async fn task_completed_stops_polling() {
 
 #[tokio::test]
 async fn approval_auto_approve_executes() {
-    let (mut gate, _handle) = approval::approval_channel(
-        ApprovalPolicy::AutoApprove,
-        Duration::from_secs(5),
-    );
+    let (mut gate, _handle) =
+        approval::approval_channel(ApprovalPolicy::AutoApprove, Duration::from_secs(5));
     let result = gate
         .request_approval("post_review", serde_json::json!({}))
         .await;
@@ -257,10 +255,8 @@ async fn approval_auto_approve_executes() {
 
 #[tokio::test]
 async fn approval_dry_run_never_executes() {
-    let (mut gate, _handle) = approval::approval_channel(
-        ApprovalPolicy::DryRun,
-        Duration::from_secs(5),
-    );
+    let (mut gate, _handle) =
+        approval::approval_channel(ApprovalPolicy::DryRun, Duration::from_secs(5));
     let result = gate
         .request_approval("post_review", serde_json::json!({"pr": 42}))
         .await;
@@ -275,10 +271,8 @@ async fn approval_dry_run_never_executes() {
 
 #[tokio::test]
 async fn approval_ask_waits_for_response() {
-    let (mut gate, mut handle) = approval::approval_channel(
-        ApprovalPolicy::Ask,
-        Duration::from_secs(5),
-    );
+    let (mut gate, mut handle) =
+        approval::approval_channel(ApprovalPolicy::Ask, Duration::from_secs(5));
 
     // Respond in a background task.
     tokio::spawn(async move {
@@ -301,10 +295,8 @@ async fn approval_ask_waits_for_response() {
 
 #[tokio::test]
 async fn approval_ask_rejected() {
-    let (mut gate, mut handle) = approval::approval_channel(
-        ApprovalPolicy::Ask,
-        Duration::from_secs(5),
-    );
+    let (mut gate, mut handle) =
+        approval::approval_channel(ApprovalPolicy::Ask, Duration::from_secs(5));
 
     tokio::spawn(async move {
         let req = handle.request_rx.recv().await.unwrap();
@@ -340,15 +332,15 @@ async fn approval_ask_timeout_drops() {
 
 #[tokio::test]
 async fn approval_request_emitted_to_channel() {
-    let (mut gate, mut handle) = approval::approval_channel(
-        ApprovalPolicy::Ask,
-        Duration::from_secs(5),
-    );
+    let (mut gate, mut handle) =
+        approval::approval_channel(ApprovalPolicy::Ask, Duration::from_secs(5));
 
     // Spawn request in background.
     let gate_handle = tokio::spawn(async move {
         // Will wait for response.
-        let _ = gate.request_approval("deploy", serde_json::json!({"env": "prod"})).await;
+        let _ = gate
+            .request_approval("deploy", serde_json::json!({"env": "prod"}))
+            .await;
     });
 
     // Read the request from the handle.
@@ -422,9 +414,7 @@ async fn scheduler_respects_poll_interval() {
     let scheduler = TaskScheduler::new(Arc::clone(&registry));
     let (tx, rx) = tokio::sync::watch::channel(false);
 
-    let sched_handle = tokio::spawn(async move {
-        scheduler.run(rx).await
-    });
+    let sched_handle = tokio::spawn(async move { scheduler.run(rx).await });
 
     // Let it run for ~250ms.
     tokio::time::sleep(Duration::from_millis(250)).await;
@@ -447,9 +437,7 @@ async fn scheduler_shutdown_stops_polling() {
     let scheduler = TaskScheduler::new(Arc::clone(&registry));
     let (tx, rx) = tokio::sync::watch::channel(false);
 
-    let sched_handle = tokio::spawn(async move {
-        scheduler.run(rx).await
-    });
+    let sched_handle = tokio::spawn(async move { scheduler.run(rx).await });
 
     tokio::time::sleep(Duration::from_millis(100)).await;
     let _ = tx.send(true);
@@ -475,9 +463,7 @@ async fn scheduler_multiple_tasks_independent() {
     let scheduler = TaskScheduler::new(Arc::clone(&registry));
     let (tx, rx) = tokio::sync::watch::channel(false);
 
-    let sched_handle = tokio::spawn(async move {
-        scheduler.run(rx).await
-    });
+    let sched_handle = tokio::spawn(async move { scheduler.run(rx).await });
 
     tokio::time::sleep(Duration::from_millis(300)).await;
     let _ = tx.send(true);
@@ -487,5 +473,8 @@ async fn scheduler_multiple_tasks_independent() {
     let c2 = count2.load(Ordering::SeqCst);
 
     // Fast task should have significantly more polls.
-    assert!(c1 > c2, "fast task ({c1}) should have more polls than slow task ({c2})");
+    assert!(
+        c1 > c2,
+        "fast task ({c1}) should have more polls than slow task ({c2})"
+    );
 }

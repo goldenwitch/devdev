@@ -42,7 +42,10 @@ fn shim_runs_inside_copilot_child_process() {
     };
 
     let overrides = devdev_cli::realpath_shim::prepare_nodejs_options();
-    assert!(!overrides.is_empty(), "shim should produce NODE_OPTIONS on Windows");
+    assert!(
+        !overrides.is_empty(),
+        "shim should produce NODE_OPTIONS on Windows"
+    );
     let (k, v) = &overrides[0];
     eprintln!("[shim-test] {k}={v}");
 

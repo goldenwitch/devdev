@@ -68,8 +68,7 @@ fn headless_parse_message() {
 
 #[test]
 fn headless_parse_approval_response() {
-    let input =
-        headless::parse_input(r#"{"type":"approval_response","approve":true}"#).unwrap();
+    let input = headless::parse_input(r#"{"type":"approval_response","approve":true}"#).unwrap();
     match input {
         HeadlessInput::ApprovalResponse { approve } => assert!(approve),
         _ => panic!("expected ApprovalResponse"),
@@ -188,10 +187,7 @@ async fn ipc_client_connect_to_daemon() {
         let mut conn = server.accept().await.unwrap();
         let req = conn.read_request().await.unwrap().unwrap();
         assert_eq!(req.method, "status");
-        let resp = IpcResponse::ok(
-            req.id,
-            serde_json::json!({"running": true, "tasks": 0}),
-        );
+        let resp = IpcResponse::ok(req.id, serde_json::json!({"running": true, "tasks": 0}));
         conn.write_response(&resp).await.unwrap();
     });
 
@@ -213,10 +209,7 @@ async fn ipc_client_send_message() {
         let req = conn.read_request().await.unwrap().unwrap();
         assert_eq!(req.method, "send");
         assert_eq!(req.params["text"], "hello");
-        let resp = IpcResponse::ok(
-            req.id,
-            serde_json::json!({"response": "hi"}),
-        );
+        let resp = IpcResponse::ok(req.id, serde_json::json!({"response": "hi"}));
         conn.write_response(&resp).await.unwrap();
     });
 
@@ -236,10 +229,7 @@ async fn ipc_client_shutdown() {
         let mut conn = server.accept().await.unwrap();
         let req = conn.read_request().await.unwrap().unwrap();
         assert_eq!(req.method, "shutdown");
-        let resp = IpcResponse::ok(
-            req.id,
-            serde_json::json!({"checkpoint_saved": true}),
-        );
+        let resp = IpcResponse::ok(req.id, serde_json::json!({"checkpoint_saved": true}));
         conn.write_response(&resp).await.unwrap();
     });
 

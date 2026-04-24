@@ -63,7 +63,12 @@ impl McpToolProvider for RecordingProvider {
 
 impl RecordingProvider {
     async fn call_count(&self, name: &str) -> usize {
-        self.calls.lock().await.iter().filter(|n| **n == name).count()
+        self.calls
+            .lock()
+            .await
+            .iter()
+            .filter(|n| **n == name)
+            .count()
     }
 }
 
@@ -78,14 +83,30 @@ struct FakeTask {
 
 #[async_trait]
 impl Task for FakeTask {
-    fn id(&self) -> &str { &self.id }
-    fn describe(&self) -> String { self.desc.clone() }
-    fn status(&self) -> &TaskStatus { &self.status }
-    fn set_status(&mut self, status: TaskStatus) { self.status = status; }
-    async fn poll(&mut self) -> Result<Vec<TaskMessage>, TaskError> { Ok(vec![]) }
-    fn serialize(&self) -> Result<serde_json::Value, TaskError> { Ok(serde_json::json!({})) }
-    fn task_type(&self) -> &str { self.kind }
-    fn poll_interval(&self) -> Duration { Duration::from_secs(60) }
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn describe(&self) -> String {
+        self.desc.clone()
+    }
+    fn status(&self) -> &TaskStatus {
+        &self.status
+    }
+    fn set_status(&mut self, status: TaskStatus) {
+        self.status = status;
+    }
+    async fn poll(&mut self) -> Result<Vec<TaskMessage>, TaskError> {
+        Ok(vec![])
+    }
+    fn serialize(&self) -> Result<serde_json::Value, TaskError> {
+        Ok(serde_json::json!({}))
+    }
+    fn task_type(&self) -> &str {
+        self.kind
+    }
+    fn poll_interval(&self) -> Duration {
+        Duration::from_secs(60)
+    }
 }
 
 // ── Environment helpers ───────────────────────────────────────────
@@ -115,7 +136,9 @@ fn which_windows(name: &str) -> Option<String> {
 }
 
 #[cfg(not(windows))]
-fn which_windows(_name: &str) -> Option<String> { None }
+fn which_windows(_name: &str) -> Option<String> {
+    None
+}
 
 fn init_tracing() {
     let default_filter =
@@ -153,21 +176,23 @@ async fn run_prompt(
     );
 
     let cwd = std::env::temp_dir()
-        .join(format!("devdev-live-mcp-{}-{}", std::process::id(), scratch_suffix))
+        .join(format!(
+            "devdev-live-mcp-{}-{}",
+            std::process::id(),
+            scratch_suffix
+        ))
         .display()
         .to_string();
     std::fs::create_dir_all(&cwd).expect("mkdir cwd");
 
-    let session_id = match tokio::time::timeout(
-        Duration::from_secs(30),
-        backend.create_session(&cwd),
-    )
-    .await
-    {
-        Ok(Ok(sid)) => sid,
-        Ok(Err(e)) => panic!("create_session failed (is `copilot` on PATH and signed in?): {e}"),
-        Err(_) => panic!("create_session timed out after 30s"),
-    };
+    let session_id =
+        match tokio::time::timeout(Duration::from_secs(30), backend.create_session(&cwd)).await {
+            Ok(Ok(sid)) => sid,
+            Ok(Err(e)) => {
+                panic!("create_session failed (is `copilot` on PATH and signed in?): {e}")
+            }
+            Err(_) => panic!("create_session timed out after 30s"),
+        };
     eprintln!("[test:{scratch_suffix}] session created: {session_id}");
 
     let response = tokio::time::timeout(
@@ -179,14 +204,16 @@ async fn run_prompt(
     .expect("send_prompt errored");
 
     eprintln!("[test:{scratch_suffix}] agent reply: {}", response.text);
-    eprintln!("[test:{scratch_suffix}] stop_reason: {}", response.stop_reason);
+    eprintln!(
+        "[test:{scratch_suffix}] stop_reason: {}",
+        response.stop_reason
+    );
 
     let _ = backend.destroy_session(&session_id).await;
     response.text
 }
 
-const PROMPT_TEMPLATE: &str =
-    "Call the MCP tool `devdev_tasks_list` now and reply with the `id` field of \
+const PROMPT_TEMPLATE: &str = "Call the MCP tool `devdev_tasks_list` now and reply with the `id` field of \
      the first task you receive. Do not run any shell commands.";
 
 // ── Test 1: recording provider (PoC flavour) ──────────────────────
@@ -209,7 +236,9 @@ async fn live_copilot_calls_devdev_tasks_list() {
             status: "polling".into(),
         }],
     });
-    let server = McpServer::start(provider.clone()).await.expect("mcp server start");
+    let server = McpServer::start(provider.clone())
+        .await
+        .expect("mcp server start");
     let endpoint = server.endpoint().clone();
     eprintln!("[test:recording] MCP server listening at {}", endpoint.url);
 
@@ -229,7 +258,10 @@ async fn live_copilot_calls_devdev_tasks_list() {
 
     // Proof 1: the MCP server saw at least one call.
     let count = provider.call_count("tasks_list").await;
-    assert!(count >= 1, "expected ≥1 devdev_tasks_list call; reply was: {reply:?}");
+    assert!(
+        count >= 1,
+        "expected ≥1 devdev_tasks_list call; reply was: {reply:?}"
+    );
 
     // Proof 2: the reply echoes our distinctive task id (no hallucination).
     assert!(

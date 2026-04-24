@@ -5,8 +5,8 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 
-use crate::types::*;
 use crate::GitHubAdapter;
+use crate::types::*;
 
 type PrKey = (String, String, u64);
 type PostedReview = (String, String, u64, Review);
@@ -40,8 +40,7 @@ impl MockGitHubAdapter {
     /// Add a canned PR response.
     pub fn with_pr(mut self, owner: &str, repo: &str, pr: PullRequest) -> Self {
         let number = pr.number;
-        self.prs
-            .insert((owner.into(), repo.into(), number), pr);
+        self.prs.insert((owner.into(), repo.into(), number), pr);
         self
     }
 
@@ -66,13 +65,7 @@ impl MockGitHubAdapter {
     }
 
     /// Add a canned PR status.
-    pub fn with_status(
-        mut self,
-        owner: &str,
-        repo: &str,
-        number: u64,
-        status: PrStatus,
-    ) -> Self {
+    pub fn with_status(mut self, owner: &str, repo: &str, number: u64, status: PrStatus) -> Self {
         self.statuses
             .insert((owner.into(), repo.into(), number), status);
         self
@@ -115,15 +108,19 @@ impl GitHubAdapter for MockGitHubAdapter {
         repo: &str,
         number: u64,
     ) -> Result<PullRequest, GitHubError> {
-        let mut pr = self.prs
+        let mut pr = self
+            .prs
             .get(&key(owner, repo, number))
             .cloned()
-            .ok_or_else(|| {
-                GitHubError::NotFound(format!("{owner}/{repo}#{number}"))
-            })?;
+            .ok_or_else(|| GitHubError::NotFound(format!("{owner}/{repo}#{number}")))?;
 
         // Apply SHA override if present.
-        if let Some(sha) = self.sha_overrides.lock().unwrap().get(&key(owner, repo, number)) {
+        if let Some(sha) = self
+            .sha_overrides
+            .lock()
+            .unwrap()
+            .get(&key(owner, repo, number))
+        {
             pr.head_sha = sha.clone();
         }
 
@@ -139,9 +136,7 @@ impl GitHubAdapter for MockGitHubAdapter {
         self.diffs
             .get(&key(owner, repo, number))
             .cloned()
-            .ok_or_else(|| {
-                GitHubError::NotFound(format!("{owner}/{repo}#{number}"))
-            })
+            .ok_or_else(|| GitHubError::NotFound(format!("{owner}/{repo}#{number}")))
     }
 
     async fn list_pr_comments(
@@ -164,12 +159,10 @@ impl GitHubAdapter for MockGitHubAdapter {
         number: u64,
         review: Review,
     ) -> Result<(), GitHubError> {
-        self.posted_reviews.lock().unwrap().push((
-            owner.into(),
-            repo.into(),
-            number,
-            review,
-        ));
+        self.posted_reviews
+            .lock()
+            .unwrap()
+            .push((owner.into(), repo.into(), number, review));
         Ok(())
     }
 
@@ -180,12 +173,10 @@ impl GitHubAdapter for MockGitHubAdapter {
         number: u64,
         body: &str,
     ) -> Result<(), GitHubError> {
-        self.posted_comments.lock().unwrap().push((
-            owner.into(),
-            repo.into(),
-            number,
-            body.into(),
-        ));
+        self.posted_comments
+            .lock()
+            .unwrap()
+            .push((owner.into(), repo.into(), number, body.into()));
         Ok(())
     }
 
@@ -198,9 +189,7 @@ impl GitHubAdapter for MockGitHubAdapter {
         self.statuses
             .get(&key(owner, repo, number))
             .cloned()
-            .ok_or_else(|| {
-                GitHubError::NotFound(format!("{owner}/{repo}#{number}"))
-            })
+            .ok_or_else(|| GitHubError::NotFound(format!("{owner}/{repo}#{number}")))
     }
 
     async fn get_pr_head_sha(
@@ -210,14 +199,17 @@ impl GitHubAdapter for MockGitHubAdapter {
         number: u64,
     ) -> Result<String, GitHubError> {
         // Check override first.
-        if let Some(sha) = self.sha_overrides.lock().unwrap().get(&key(owner, repo, number)) {
+        if let Some(sha) = self
+            .sha_overrides
+            .lock()
+            .unwrap()
+            .get(&key(owner, repo, number))
+        {
             return Ok(sha.clone());
         }
         self.prs
             .get(&key(owner, repo, number))
             .map(|pr| pr.head_sha.clone())
-            .ok_or_else(|| {
-                GitHubError::NotFound(format!("{owner}/{repo}#{number}"))
-            })
+            .ok_or_else(|| GitHubError::NotFound(format!("{owner}/{repo}#{number}")))
     }
 }

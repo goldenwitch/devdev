@@ -4,14 +4,13 @@
 
 use std::io::Cursor;
 
+use devdev_acp::types::{
+    ClientCapabilities, ClientInfo, ContentBlock, CreateTerminalParams, FsCapabilities,
+    InitializeParams, PermissionKind, PermissionRequestParams, PlanEntry, SessionUpdate,
+    SessionUpdateParams, ToolCall, ToolCallKind, ToolCallStatus, ToolCallUpdate,
+};
 use devdev_acp::{
     Message, NdjsonReader, NdjsonWriter, Notification, Request, RequestId, Response, RpcError,
-};
-use devdev_acp::types::{
-    ContentBlock, CreateTerminalParams, InitializeParams, ClientCapabilities,
-    ClientInfo, FsCapabilities, PermissionKind, PermissionRequestParams,
-    SessionUpdate, SessionUpdateParams, ToolCall, ToolCallKind, ToolCallStatus,
-    ToolCallUpdate, PlanEntry,
 };
 
 /// AC: Round-trip serialize InitializeParams → JSON → deserialize → identical struct.
@@ -44,7 +43,9 @@ fn initialize_params_roundtrip() {
 #[test]
 fn session_update_agent_message_chunk_roundtrip() {
     let variant = SessionUpdate::AgentMessageChunk {
-        content: ContentBlock { text: "hello".into() },
+        content: ContentBlock {
+            text: "hello".into(),
+        },
     };
     let json = serde_json::to_string(&variant).unwrap();
     let roundtrip: SessionUpdate = serde_json::from_str(&json).unwrap();
@@ -55,7 +56,9 @@ fn session_update_agent_message_chunk_roundtrip() {
 #[test]
 fn session_update_agent_thought_chunk_roundtrip() {
     let variant = SessionUpdate::AgentThoughtChunk {
-        content: ContentBlock { text: "thinking...".into() },
+        content: ContentBlock {
+            text: "thinking...".into(),
+        },
     };
     let json = serde_json::to_string(&variant).unwrap();
     let roundtrip: SessionUpdate = serde_json::from_str(&json).unwrap();
@@ -130,8 +133,10 @@ fn ndjson_writer_one_per_line() {
 #[test]
 fn ndjson_reader_multiline() {
     let input = concat!(
-        r#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#, "\n",
-        r#"{"jsonrpc":"2.0","id":2,"method":"session/new","params":{"cwd":"/tmp"}}"#, "\n",
+        r#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#,
+        "\n",
+        r#"{"jsonrpc":"2.0","id":2,"method":"session/new","params":{"cwd":"/tmp"}}"#,
+        "\n",
     );
     let cursor = Cursor::new(input.as_bytes());
     let mut reader = NdjsonReader::new(cursor);
@@ -258,10 +263,12 @@ fn session_update_params_roundtrip() {
 #[test]
 fn ndjson_reader_skips_blank_lines() {
     let input = concat!(
-        r#"{"jsonrpc":"2.0","id":1,"method":"a"}"#, "\n",
+        r#"{"jsonrpc":"2.0","id":1,"method":"a"}"#,
         "\n",
         "\n",
-        r#"{"jsonrpc":"2.0","id":2,"method":"b"}"#, "\n",
+        "\n",
+        r#"{"jsonrpc":"2.0","id":2,"method":"b"}"#,
+        "\n",
     );
     let cursor = Cursor::new(input.as_bytes());
     let mut reader = NdjsonReader::new(cursor);
@@ -287,11 +294,14 @@ fn response_success_helper() {
 /// Verify Response::error helper serializes with "error" and no "result".
 #[test]
 fn response_error_helper() {
-    let err = Response::error(2u64, RpcError {
-        code: -32601,
-        message: "Method not found".into(),
-        data: None,
-    });
+    let err = Response::error(
+        2u64,
+        RpcError {
+            code: -32601,
+            message: "Method not found".into(),
+            data: None,
+        },
+    );
     let json = serde_json::to_string(&err).unwrap();
     assert!(json.contains("\"error\""));
     assert!(!json.contains("\"result\""));

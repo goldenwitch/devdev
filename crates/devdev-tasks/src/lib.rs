@@ -11,10 +11,12 @@ pub mod review;
 pub mod scheduler;
 pub mod task;
 
-pub use approval::{ApprovalError, ApprovalGate, ApprovalPolicy, ApprovalRequest, ApprovalResponse};
+pub use approval::{
+    ApprovalError, ApprovalGate, ApprovalPolicy, ApprovalRequest, ApprovalResponse,
+};
 pub use monitor_pr::MonitorPrTask;
 pub use pr_ref::PrRef;
 pub use registry::TaskRegistry;
-pub use review::{parse_review, ParsedReview};
+pub use review::{ParsedReview, parse_review};
 pub use scheduler::TaskScheduler;
 pub use task::{Task, TaskError, TaskMessage, TaskStatus};
