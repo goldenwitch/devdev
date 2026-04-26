@@ -110,18 +110,38 @@ impl Workspace {
     /// - `LOGNAME=agent`
     /// - `SHELL=/bin/sh`
     /// - `TERM=dumb`
+    /// - `GIT_TERMINAL_PROMPT=0`
+    /// - `GIT_PAGER=cat`
+    /// - `PAGER=cat`
     /// - `PATH=<inherited from host>`
     ///
     /// Anything else (e.g. `LD_*`, `WSL_*`, user locale, parent shell
     /// state) is stripped. Drivers may inject `TERM` / `PWD` / etc.
     /// on top of this baseline; see `tests/env_sanitization.rs` for
     /// the full accepted set.
+    ///
+    /// Wraps [`Self::exec_with_timeout`] with [`DEFAULT_EXEC_TIMEOUT`].
     pub fn exec(
         &self,
         cmd: &OsStr,
         args: &[&OsStr],
         cwd_in_fs: &[u8],
         output: &mut Vec<u8>,
+    ) -> Result<i32, ExecError> {
+        self.exec_with_timeout(cmd, args, cwd_in_fs, output, DEFAULT_EXEC_TIMEOUT)
+    }
+
+    /// Same as [`Self::exec`] but with a caller-supplied wall-clock
+    /// timeout. On elapse the child is killed and `ExecError::Timeout`
+    /// is returned; any output captured up to that point is left in
+    /// `output`.
+    pub fn exec_with_timeout(
+        &self,
+        cmd: &OsStr,
+        args: &[&OsStr],
+        cwd_in_fs: &[u8],
+        output: &mut Vec<u8>,
+        timeout: Duration,
     ) -> Result<i32, ExecError> {
         let Some(driver) = self.driver.as_deref() else {
             return Err(ExecError::NotMounted);
@@ -163,7 +183,9 @@ impl Workspace {
             })
         });
 
-        let exit_code: i32;
+        let deadline = std::time::Instant::now() + timeout;
+        let mut timed_out = false;
+        let mut exit_code: i32 = -1;
         loop {
             while let Ok(chunk) = rx.try_recv() {
                 output.extend_from_slice(&chunk);
@@ -173,7 +195,16 @@ impl Workspace {
                     exit_code = status.exit_code() as i32;
                     break;
                 }
-                None => std::thread::sleep(Duration::from_millis(10)),
+                None => {
+                    if std::time::Instant::now() >= deadline {
+                        let _ = pty.kill();
+                        timed_out = true;
+                        // Wait for the (now-killed) child so we don't leak.
+                        let _ = pty.try_wait();
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(10));
+                }
             }
         }
 
@@ -187,9 +218,17 @@ impl Workspace {
             output.extend_from_slice(&chunk);
         }
 
+        if timed_out {
+            return Err(ExecError::Timeout);
+        }
         Ok(exit_code)
     }
 }
+
+/// Default wall-clock timeout for [`Workspace::exec`]. Long enough
+/// for cargo / git work against typical fixtures; short enough that
+/// a hung child can never burn an entire CI budget.
+pub const DEFAULT_EXEC_TIMEOUT: Duration = Duration::from_secs(120);
 
 fn curated_env() -> Vec<(OsString, OsString)> {
     let mut env: Vec<(OsString, OsString)> = vec![
@@ -199,6 +238,13 @@ fn curated_env() -> Vec<(OsString, OsString)> {
         ("LOGNAME".into(), "agent".into()),
         ("SHELL".into(), "/bin/sh".into()),
         ("TERM".into(), "dumb".into()),
+        // Belt-and-suspenders against PTY-stdin hangs: never let git
+        // (or anything else) prompt for credentials, and disable
+        // pagers so commands like `git log` exit instead of waiting
+        // on a `q` keypress.
+        ("GIT_TERMINAL_PROMPT".into(), "0".into()),
+        ("GIT_PAGER".into(), "cat".into()),
+        ("PAGER".into(), "cat".into()),
     ];
     if let Some(path) = std::env::var_os("PATH") {
         env.push(("PATH".into(), path));

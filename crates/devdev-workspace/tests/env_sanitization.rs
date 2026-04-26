@@ -26,7 +26,8 @@ fn workspace_with_basics() -> Workspace {
 #[test]
 fn env_is_curated() {
     // Allow-list:
-    //   HOME, CARGO_HOME, USER, LOGNAME, SHELL, TERM, PATH  -- curated
+    //   HOME, CARGO_HOME, USER, LOGNAME, SHELL, TERM,
+    //   GIT_TERMINAL_PROMPT, GIT_PAGER, PAGER, PATH       -- curated
     //                                                          env from
     //                                                          Workspace::exec
     //   SHLVL, PWD, _, OLDPWD                               -- PTY /
@@ -42,6 +43,9 @@ fn env_is_curated() {
         "LOGNAME",
         "SHELL",
         "TERM",
+        "GIT_TERMINAL_PROMPT",
+        "GIT_PAGER",
+        "PAGER",
         "PATH",
         "SHLVL",
         "PWD",

@@ -253,7 +253,11 @@ fn repo_survives_fs_snapshot_roundtrip() {
 fn git_log_reads_materialised_repo() {
     let (ws, head_sha) = workspace_with_seeded_repo();
     let mut out = Vec::new();
-    let args: &[&OsStr] = &[OsStr::new("log"), OsStr::new("--oneline")];
+    let args: &[&OsStr] = &[
+        OsStr::new("--no-pager"),
+        OsStr::new("log"),
+        OsStr::new("--oneline"),
+    ];
     let code = ws
         .exec(OsStr::new("git"), args, b"/repos/org/acme", &mut out)
         .expect("exec git log");
