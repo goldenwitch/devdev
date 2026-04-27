@@ -9,6 +9,8 @@
 # Scratch / tempfile output
 /tmp/
 /target/tmp/
+run_id.txt
+/.devdev-runtime/
 
 # IDE
 .idea/

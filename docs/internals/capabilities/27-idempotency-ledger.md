@@ -1,7 +1,7 @@
 ---
 id: idempotency-ledger
 title: "Idempotency Ledger"
-status: not-started
+status: shipped
 type: leaf
 phase: 2
 crate: devdev-daemon

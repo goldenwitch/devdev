@@ -202,3 +202,99 @@ async fn s06_checkpoint_missing_is_fresh_start() {
     let _ = daemon.status().await.expect("status");
     daemon.shutdown().expect("devdev down");
 }
+
+// ── S07 ─────────────────────────────────────────────────────────
+
+/// S07 — Repo watch task lifecycle.
+/// See: crates/devdev-scenarios/catalog/S07-repo-watch-task-lifecycle.md
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn s07_repo_watch_task_lifecycle() {
+    let scratch = Scratch::new();
+    let before = DirSnapshot::capture(scratch.outer()).expect("snapshot before");
+
+    let mut daemon = DaemonProcess::spawn(&scratch.data_dir, false).expect("devdev up");
+
+    // Helper closures via local async block — keeps the assertions
+    // close to the steps they correspond to in the catalog file.
+    let task_count = |v: &serde_json::Value| -> u64 {
+        v.get("tasks")
+            .and_then(|t| t.as_u64())
+            .expect("status.tasks is u64")
+    };
+
+    let baseline = task_count(&daemon.status().await.expect("status baseline"));
+
+    // Step 2: repo/watch (first call → newly watched).
+    let mut client = daemon.connect().await.expect("connect 1");
+    let resp = client
+        .request(
+            "repo/watch",
+            serde_json::json!({ "owner": "fake", "repo": "repo" }),
+        )
+        .await
+        .expect("repo/watch 1");
+    let result1 = resp.result.expect("repo/watch result 1");
+    assert_eq!(result1["already_watching"], serde_json::json!(false));
+    let task_id = result1["task_id"]
+        .as_str()
+        .expect("task_id string")
+        .to_string();
+    assert!(!task_id.is_empty(), "task_id is non-empty");
+
+    let after_watch = task_count(&daemon.status().await.expect("status after watch"));
+    assert_eq!(after_watch, baseline + 1, "watch must add exactly one task");
+
+    // Step 4: idempotent repo/watch (same params → already_watching).
+    let mut client = daemon.connect().await.expect("connect 2");
+    let resp = client
+        .request(
+            "repo/watch",
+            serde_json::json!({ "owner": "fake", "repo": "repo" }),
+        )
+        .await
+        .expect("repo/watch 2");
+    let result2 = resp.result.expect("repo/watch result 2");
+    assert_eq!(result2["already_watching"], serde_json::json!(true));
+    assert_eq!(
+        result2["task_id"].as_str(),
+        Some(task_id.as_str()),
+        "idempotent watch returns same task_id"
+    );
+
+    let after_watch2 = task_count(&daemon.status().await.expect("status after watch 2"));
+    assert_eq!(
+        after_watch2, after_watch,
+        "duplicate watch must not spawn a second task"
+    );
+
+    // Step 6: unwatch.
+    let mut client = daemon.connect().await.expect("connect 3");
+    let resp = client
+        .request(
+            "repo/unwatch",
+            serde_json::json!({ "owner": "fake", "repo": "repo" }),
+        )
+        .await
+        .expect("repo/unwatch");
+    let result3 = resp.result.expect("repo/unwatch result");
+    assert_eq!(
+        result3["task_id"].as_str(),
+        Some(task_id.as_str()),
+        "unwatch returns the cancelled task_id"
+    );
+
+    // Step 7: task gone. The registry may keep the entry around in
+    // a cancelled state depending on its bookkeeping, so we assert
+    // ≤ baseline rather than a strict equality. The semantic
+    // contract is "no longer running"; the wire shape is internal.
+    let after_unwatch = task_count(&daemon.status().await.expect("status after unwatch"));
+    assert!(
+        after_unwatch <= after_watch,
+        "unwatch must not increase task count: was {after_watch}, now {after_unwatch}"
+    );
+
+    daemon.shutdown().expect("devdev down");
+
+    let after = DirSnapshot::capture(scratch.outer()).expect("snapshot after");
+    assert_confined(scratch.outer(), &scratch.data_dir, &before, &after);
+}

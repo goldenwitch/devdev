@@ -1,7 +1,7 @@
 ---
 id: monitor-pr-task
 title: "MonitorPR Task"
-status: not-started
+status: shipped
 type: composition
 phase: 2
 crate: devdev-tasks

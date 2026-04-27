@@ -46,6 +46,58 @@ pub struct TaskInfo {
     pub status: String,
 }
 
+/// Kinds of asks the agent can make through [`McpToolProvider::ask`].
+/// Drives both the user-facing summary and (for `RequestToken`)
+/// whether we surface the host `gh` token in the response.
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AskKind {
+    /// Agent intends to post a PR review/comment. Approval response
+    /// surfaces a short-lived `gh` token the agent uses with `gh pr
+    /// comment` / `gh pr review`.
+    PostReview,
+    /// Agent wants to leave a non-review comment.
+    PostComment,
+    /// Agent wants the `gh` token for an action not enumerated above.
+    RequestToken,
+    /// Agent wants the user to answer an open question. No token.
+    Question,
+}
+
+/// One ask request from the agent.
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct AskRequest {
+    pub kind: AskKind,
+    /// Human-readable single-line summary surfaced in the approval prompt.
+    pub summary: String,
+    /// Free-form structured payload (e.g. `{ comment, file?, line? }`
+    /// for `post_review`). Echoed back in the response.
+    #[serde(default)]
+    pub payload: serde_json::Value,
+}
+
+/// Outcome the agent receives.
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum AskResponse {
+    /// Approved. `token` is `Some` for kinds that requested a token
+    /// AND the host had one to give.
+    Approved {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        token: Option<String>,
+        /// Wall-clock seconds since epoch hinting when the token
+        /// should no longer be relied upon.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        expires_at: Option<u64>,
+        /// Echo of the original payload so the agent can correlate.
+        payload: serde_json::Value,
+    },
+    /// User rejected the request.
+    Rejected { reason: String },
+    /// Approval request timed out.
+    Timeout,
+}
+
 /// Data source for DevDev MCP tools.
 ///
 /// Concrete daemon wiring lives in a separate capability
@@ -67,6 +119,15 @@ pub trait McpToolProvider: Send + Sync {
     async fn fs_write(&self, _path: String, _content: String) -> Result<(), McpProviderError> {
         Err(McpProviderError::Other(
             "fs_write not supported by this provider".into(),
+        ))
+    }
+
+    /// Submit an ask to the user. Default impl rejects so read-only
+    /// providers (e.g. `StaticProvider`) fail loudly rather than
+    /// auto-approving silently.
+    async fn ask(&self, _req: AskRequest) -> Result<AskResponse, McpProviderError> {
+        Err(McpProviderError::Other(
+            "ask not supported by this provider".into(),
         ))
     }
 }
@@ -141,6 +202,35 @@ impl DevDevMcpHandler {
             "wrote {}",
             args.path
         ))]))
+    }
+
+    #[tool(
+        description = "Ask the user (via DevDev's approval gate) for permission \
+         to take an external action. Use this BEFORE running `gh pr comment`, \
+         posting a review, fetching a token, or any other side-effecting \
+         operation. `kind` is one of: `post_review` (will return a short-lived \
+         GitHub token), `post_comment` (also returns token), `request_token` \
+         (returns token only), `question` (returns approval, no token). \
+         `summary` is a single-line human-readable description shown in the \
+         approval prompt. `payload` is your free-form structured arguments \
+         (e.g. `{ \"comment\": \"...\", \"file\": \"...\", \"line\": 42 }`). \
+         The response is `{status: \"approved\"|\"rejected\"|\"timeout\", ...}`. \
+         On `approved`, use `token` (if present) with `GH_TOKEN=<token> gh ...`."
+    )]
+    async fn devdev_ask(
+        &self,
+        rmcp::handler::server::wrapper::Parameters(args): rmcp::handler::server::wrapper::Parameters<
+            AskRequest,
+        >,
+    ) -> Result<CallToolResult, McpError> {
+        let resp = self
+            .provider
+            .ask(args)
+            .await
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        // Serialize is infallible for this enum.
+        let text = serde_json::to_string_pretty(&resp).unwrap();
+        Ok(CallToolResult::success(vec![Content::text(text)]))
     }
 }
 

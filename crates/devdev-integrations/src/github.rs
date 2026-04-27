@@ -326,4 +326,34 @@ impl GitHubAdapter for LiveGitHubAdapter {
         let value: serde_json::Value = self.get_json(&url).await?;
         Ok(value["head"]["sha"].as_str().unwrap_or("").to_string())
     }
+
+    async fn list_open_prs(
+        &self,
+        owner: &str,
+        repo: &str,
+    ) -> Result<Vec<PullRequest>, GitHubError> {
+        let mut all = Vec::new();
+        let mut page = 1u32;
+        let max_pages = 10u32;
+        loop {
+            let url = format!(
+                "{API_BASE}/repos/{owner}/{repo}/pulls?state=open&per_page=100&page={page}"
+            );
+            let value: serde_json::Value = self.get_json(&url).await?;
+            let arr = value
+                .as_array()
+                .ok_or_else(|| GitHubError::Deserialize("expected array".into()))?;
+            if arr.is_empty() {
+                break;
+            }
+            for item in arr {
+                all.push(parse_pr(item.clone())?);
+            }
+            page += 1;
+            if page > max_pages {
+                break;
+            }
+        }
+        Ok(all)
+    }
 }

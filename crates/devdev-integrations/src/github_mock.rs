@@ -212,4 +212,24 @@ impl GitHubAdapter for MockGitHubAdapter {
             .map(|pr| pr.head_sha.clone())
             .ok_or_else(|| GitHubError::NotFound(format!("{owner}/{repo}#{number}")))
     }
+
+    async fn list_open_prs(
+        &self,
+        owner: &str,
+        repo: &str,
+    ) -> Result<Vec<PullRequest>, GitHubError> {
+        let overrides = self.sha_overrides.lock().unwrap().clone();
+        let mut out = Vec::new();
+        for ((o, r, n), pr) in &self.prs {
+            if o == owner && r == repo && matches!(pr.state, PrState::Open) {
+                let mut pr = pr.clone();
+                if let Some(sha) = overrides.get(&(o.clone(), r.clone(), *n)) {
+                    pr.head_sha = sha.clone();
+                }
+                out.push(pr);
+            }
+        }
+        out.sort_by_key(|p| p.number);
+        Ok(out)
+    }
 }

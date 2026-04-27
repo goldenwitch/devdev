@@ -15,4 +15,6 @@ mod tools;
 
 pub use http::{McpEndpoint, McpServer, McpServerError};
 pub use provider::DaemonToolProvider;
-pub use tools::{McpProviderError, McpToolProvider, StaticProvider, TaskInfo};
+pub use tools::{
+    AskKind, AskRequest, AskResponse, McpProviderError, McpToolProvider, StaticProvider, TaskInfo,
+};

@@ -74,4 +74,21 @@ pub trait GitHubAdapter: Send + Sync {
         repo: &str,
         number: u64,
     ) -> Result<String, GitHubError>;
+
+    /// List open PRs in a repo. Adapters paginate internally; callers
+    /// receive the flat union. Used by `RepoWatchTask` to discover
+    /// new PRs without webhooks.
+    async fn list_open_prs(&self, owner: &str, repo: &str)
+    -> Result<Vec<PullRequest>, GitHubError>;
+}
+
+/// Stable fingerprint of a PR's reviewable state. Used as a ledger
+/// `state_hash` to dedup re-reviews. We hash `head_sha + updated_at`
+/// so a force-push *and* a metadata-only edit both bump the key.
+pub fn pr_state_hash(pr: &PullRequest) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    pr.head_sha.hash(&mut h);
+    pr.updated_at.hash(&mut h);
+    format!("sha:{:x}", h.finish())
 }

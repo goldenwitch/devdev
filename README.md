@@ -30,9 +30,12 @@ in [ROADMAP.md](ROADMAP.md).
   (`cargo`, `git`, `rg`, language servers) can operate in. Start at
   [`crates/devdev-workspace/README.md`](crates/devdev-workspace/README.md).
 - **DevDev-hosting.** You want to run the full agent product locally
-  (PR monitoring, preferences-as-Markdown, approval gates). Today
-  you're early — several loops are still behind placeholders, tracked
-  in [ROADMAP.md](ROADMAP.md).
+  (PR shepherding, preferences-as-Markdown, approval gates). The
+  end-to-end loop — `devdev init` → `devdev repo watch` → agent
+  reviews PRs as they appear — works against the mock GitHub
+  adapter today; live `gh` posting is gated behind `devdev_ask`
+  approvals. See [ROADMAP.md](ROADMAP.md) for what's shipped vs.
+  in flight.
 
 ## Quickstart: the workspace library
 
@@ -71,13 +74,19 @@ From source:
 
 ```
 cargo install --git https://github.com/goldenwitch/devdev devdev-cli
-devdev up     # starts the daemon
-devdev down   # stops it
+devdev up                              # starts the daemon
+devdev init                            # interview yourself; writes .devdev/*.md
+devdev repo watch owner/name           # poll GitHub for PR events
+devdev preferences list                # show discovered .devdev/*.md
+devdev down                            # stops the daemon
 ```
 
 DevDev expects a logged-in [GitHub Copilot CLI](https://github.com/github/copilot-cli)
 (`copilot --acp` must work) and, for GitHub adapters, either a
 `gh auth login` session or a `GH_TOKEN` / `GITHUB_TOKEN` env var.
+When the agent wants to post a review or comment it calls the
+`devdev_ask` MCP tool; the daemon prompts you for approval and, on
+“yes”, hands the agent a short-lived `gh` token to act with.
 
 ## Platform matrix
 

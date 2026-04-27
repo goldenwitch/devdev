@@ -1,5 +1,6 @@
 //! IPC method dispatcher — routes incoming requests to subsystems.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -7,30 +8,50 @@ use serde_json::{Value, json};
 use tokio::sync::{Mutex, watch};
 
 use devdev_integrations::GitHubAdapter;
-use devdev_tasks::approval::{ApprovalHandle, ApprovalPolicy, ApprovalResponse};
-use devdev_tasks::monitor_pr::{MonitorPrTask, ReviewFn};
+use devdev_tasks::approval::{
+    ApprovalGate, ApprovalHandle, ApprovalPolicy, ApprovalResponse, approval_channel,
+};
+use devdev_tasks::events::EventBus;
+use devdev_tasks::ledger::IdempotencyLedger;
+use devdev_tasks::monitor_pr::MonitorPrTask;
 use devdev_tasks::registry::TaskRegistry;
+use devdev_tasks::repo_watch::RepoWatchTask;
 use devdev_workspace::Fs;
 
 use crate::ipc::{IpcRequest, IpcResponse};
 use crate::router::{SessionHandle, SessionRouter};
+use crate::runner::RouterRunner;
+use crate::secrets::AgentSecrets;
 
 /// Shared state for the dispatch layer.
 pub struct DispatchContext {
     pub router: Arc<SessionRouter>,
     pub tasks: Arc<Mutex<TaskRegistry>>,
     pub github: Arc<dyn GitHubAdapter>,
+    /// Sender side of the approval channel, used by `devdev_ask` to
+    /// request user approval before the agent takes external action.
+    pub approval_gate: Arc<Mutex<ApprovalGate>>,
+    /// Receiver side, surfaced through the `approval_response` IPC so
+    /// a TUI / CLI can pump approvals.
     pub approval_handle: Arc<Mutex<ApprovalHandle>>,
-    pub review_fn: ReviewFn,
+    pub event_bus: EventBus,
+    pub ledger: Arc<dyn IdempotencyLedger>,
     pub approval_policy: ApprovalPolicy,
     pub approval_timeout: Duration,
+    /// Host-derived secrets (e.g. `gh auth token`) handed out only on
+    /// approved `devdev_ask` calls.
+    pub agent_secrets: Arc<Mutex<AgentSecrets>>,
     pub shutdown_tx: watch::Sender<bool>,
     /// Workspace filesystem, shared with the MCP provider so `fs/read`
     /// IPC calls observe the same bytes the agent wrote via MCP tools.
     pub fs: Arc<Mutex<Fs>>,
     interactive: Mutex<Option<SessionHandle>>,
     /// Log entries per task (task_id → messages).
-    task_logs: Mutex<std::collections::HashMap<String, Vec<String>>>,
+    task_logs: Mutex<HashMap<String, Vec<String>>>,
+    /// Active `RepoWatchTask`s keyed by `(owner, repo)`.
+    repo_watch_ids: Mutex<HashMap<(String, String), String>>,
+    /// Active `MonitorPrTask`s keyed by `(owner, repo, number)`.
+    monitor_pr_ids: Mutex<HashMap<(String, String, u64), String>>,
 }
 
 impl DispatchContext {
@@ -39,9 +60,12 @@ impl DispatchContext {
         router: Arc<SessionRouter>,
         tasks: Arc<Mutex<TaskRegistry>>,
         github: Arc<dyn GitHubAdapter>,
+        approval_gate: Arc<Mutex<ApprovalGate>>,
         approval_handle: Arc<Mutex<ApprovalHandle>>,
-        review_fn: ReviewFn,
+        event_bus: EventBus,
+        ledger: Arc<dyn IdempotencyLedger>,
         approval_policy: ApprovalPolicy,
+        agent_secrets: Arc<Mutex<AgentSecrets>>,
         shutdown_tx: watch::Sender<bool>,
         fs: Arc<Mutex<Fs>>,
     ) -> Self {
@@ -49,20 +73,29 @@ impl DispatchContext {
             router,
             tasks,
             github,
+            approval_gate,
             approval_handle,
-            review_fn,
+            event_bus,
+            ledger,
             approval_policy,
             approval_timeout: Duration::from_secs(300),
+            agent_secrets,
             shutdown_tx,
             fs,
             interactive: Mutex::new(None),
-            task_logs: Mutex::new(std::collections::HashMap::new()),
+            task_logs: Mutex::new(HashMap::new()),
+            repo_watch_ids: Mutex::new(HashMap::new()),
+            monitor_pr_ids: Mutex::new(HashMap::new()),
         }
     }
 
-    /// Set a custom approval timeout (useful for tests).
+    /// Set a custom approval timeout (useful for tests). Rebuilds the
+    /// underlying channel so the new timeout is honored.
     pub fn with_approval_timeout(mut self, timeout: Duration) -> Self {
         self.approval_timeout = timeout;
+        let (gate, handle) = approval_channel(self.approval_policy, timeout);
+        self.approval_gate = Arc::new(Mutex::new(gate));
+        self.approval_handle = Arc::new(Mutex::new(handle));
         self
     }
 
@@ -72,6 +105,8 @@ impl DispatchContext {
             "send" => self.handle_send(req).await,
             "task/add" => self.handle_task_add(req).await,
             "task/log" => self.handle_task_log(req).await,
+            "repo/watch" => self.handle_repo_watch(req).await,
+            "repo/unwatch" => self.handle_repo_unwatch(req).await,
             "status" => self.handle_status(req).await,
             "shutdown" => self.handle_shutdown(req).await,
             "approval_response" => self.handle_approval(req).await,
@@ -170,28 +205,35 @@ impl DispatchContext {
             self.approval_policy
         };
 
-        let (gate, handle) =
-            devdev_tasks::approval::approval_channel(policy, self.approval_timeout);
-
-        // Store the new approval handle (replace previous one if any).
-        {
-            let mut ah = self.approval_handle.lock().await;
-            *ah = handle;
+        // If the per-task `auto_approve` overrides the daemon's
+        // policy, swap the active approval channel so `devdev_ask`
+        // bypasses prompts for this task.
+        if policy != self.approval_policy {
+            let (gate, handle) = approval_channel(policy, self.approval_timeout);
+            *self.approval_gate.lock().await = gate;
+            *self.approval_handle.lock().await = handle;
         }
 
-        let gate = Arc::new(Mutex::new(gate));
         let mut registry = self.tasks.lock().await;
         let task_id = registry.next_id();
+        let runner = Arc::new(RouterRunner::new(Arc::clone(&self.router), task_id.clone()))
+            as Arc<dyn devdev_tasks::agent::AgentRunner>;
 
         match MonitorPrTask::new(
             task_id.clone(),
             &pr_ref_str,
             Arc::clone(&self.github),
-            gate,
-            Arc::clone(&self.review_fn),
+            runner,
+            &self.event_bus,
         ) {
             Ok(task) => {
+                let pr = task.pr_ref().clone();
                 registry.add(Box::new(task));
+                drop(registry);
+                self.monitor_pr_ids.lock().await.insert(
+                    (pr.owner.clone(), pr.repo.clone(), pr.number),
+                    task_id.clone(),
+                );
                 IpcResponse::ok(
                     req.id,
                     json!({
@@ -201,6 +243,133 @@ impl DispatchContext {
             }
             Err(e) => IpcResponse::err(req.id, -1, e.to_string()),
         }
+    }
+
+    /// "repo/watch" — start a `RepoWatchTask` for `(owner, repo)`.
+    ///
+    /// Idempotent: subsequent calls for the same repo return the
+    /// existing task id without spawning a duplicate watcher.
+    async fn handle_repo_watch(&self, req: IpcRequest) -> IpcResponse {
+        let owner = match req.params["owner"].as_str() {
+            Some(s) => s.to_string(),
+            None => return IpcResponse::err(req.id, -32602, "missing params.owner"),
+        };
+        let repo = match req.params["repo"].as_str() {
+            Some(s) => s.to_string(),
+            None => return IpcResponse::err(req.id, -32602, "missing params.repo"),
+        };
+        let interval_secs = req
+            .params
+            .get("poll_interval_secs")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(60);
+
+        let key = (owner.clone(), repo.clone());
+        {
+            let watches = self.repo_watch_ids.lock().await;
+            if let Some(id) = watches.get(&key) {
+                return IpcResponse::ok(req.id, json!({ "task_id": id, "already_watching": true }));
+            }
+        }
+
+        let mut registry = self.tasks.lock().await;
+        let task_id = registry.next_id();
+        let task = RepoWatchTask::new(
+            task_id.clone(),
+            owner.clone(),
+            repo.clone(),
+            Arc::clone(&self.github),
+            Arc::clone(&self.ledger),
+            self.event_bus.clone(),
+        )
+        .with_interval(Duration::from_secs(interval_secs));
+        registry.add(Box::new(task));
+        drop(registry);
+
+        self.repo_watch_ids
+            .lock()
+            .await
+            .insert(key, task_id.clone());
+
+        IpcResponse::ok(
+            req.id,
+            json!({ "task_id": task_id, "already_watching": false }),
+        )
+    }
+
+    /// "repo/unwatch" — cancel an active `RepoWatchTask`.
+    async fn handle_repo_unwatch(&self, req: IpcRequest) -> IpcResponse {
+        let owner = match req.params["owner"].as_str() {
+            Some(s) => s.to_string(),
+            None => return IpcResponse::err(req.id, -32602, "missing params.owner"),
+        };
+        let repo = match req.params["repo"].as_str() {
+            Some(s) => s.to_string(),
+            None => return IpcResponse::err(req.id, -32602, "missing params.repo"),
+        };
+
+        let task_id = {
+            let mut watches = self.repo_watch_ids.lock().await;
+            match watches.remove(&(owner.clone(), repo.clone())) {
+                Some(id) => id,
+                None => {
+                    return IpcResponse::err(
+                        req.id,
+                        -32602,
+                        format!("not watching {owner}/{repo}"),
+                    );
+                }
+            }
+        };
+
+        let mut registry = self.tasks.lock().await;
+        match registry.cancel(&task_id) {
+            Ok(()) => IpcResponse::ok(req.id, json!({ "task_id": task_id })),
+            Err(e) => IpcResponse::err(req.id, -1, e.to_string()),
+        }
+    }
+
+    /// Ensure a `MonitorPrTask` exists for `(owner, repo, number)`.
+    /// Used by the event coordinator on first observation of a PR.
+    /// Returns `(task_id, newly_created)`. When `newly_created` is
+    /// true the caller should replay the triggering event onto the
+    /// bus so the freshly-subscribed task observes it.
+    pub async fn ensure_monitor_pr_task(
+        &self,
+        owner: &str,
+        repo: &str,
+        number: u64,
+    ) -> Result<(String, bool), String> {
+        let key = (owner.to_string(), repo.to_string(), number);
+        {
+            let map = self.monitor_pr_ids.lock().await;
+            if let Some(id) = map.get(&key) {
+                return Ok((id.clone(), false));
+            }
+        }
+
+        let pr_ref_str = format!("{owner}/{repo}#{number}");
+        let mut registry = self.tasks.lock().await;
+        let task_id = registry.next_id();
+        let runner = Arc::new(RouterRunner::new(Arc::clone(&self.router), task_id.clone()))
+            as Arc<dyn devdev_tasks::agent::AgentRunner>;
+
+        let task = MonitorPrTask::new(
+            task_id.clone(),
+            &pr_ref_str,
+            Arc::clone(&self.github),
+            runner,
+            &self.event_bus,
+        )
+        .map_err(|e| e.to_string())?;
+        registry.add(Box::new(task));
+        drop(registry);
+
+        self.monitor_pr_ids
+            .lock()
+            .await
+            .insert(key, task_id.clone());
+        Ok((task_id, true))
     }
 
     /// "task/log" — return logged messages for a task.
@@ -300,6 +469,53 @@ impl DispatchContext {
             }
         }
     }
+}
+
+/// Spawn a background coordinator that subscribes to the daemon
+/// [`EventBus`] and ensures a [`MonitorPrTask`] exists for every PR
+/// it observes. Runs until the watch flag flips.
+pub fn spawn_event_coordinator(
+    ctx: Arc<DispatchContext>,
+    mut shutdown: watch::Receiver<bool>,
+) -> tokio::task::JoinHandle<()> {
+    let mut rx = ctx.event_bus.subscribe();
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                changed = shutdown.changed() => {
+                    if changed.is_err() || *shutdown.borrow() {
+                        break;
+                    }
+                }
+                ev = rx.recv() => {
+                    let ev = match ev {
+                        Ok(e) => e,
+                        Err(_) => break,
+                    };
+                    if let Some((owner, repo, number)) = ev.pr_target() {
+                        let owner = owner.to_string();
+                        let repo = repo.to_string();
+                        match ctx
+                            .ensure_monitor_pr_task(&owner, &repo, number)
+                            .await
+                        {
+                            Ok((_, true)) => {
+                                // Newly-created task subscribed *after* this
+                                // event was published; replay so it sees it.
+                                ctx.event_bus.publish(ev.clone());
+                            }
+                            Ok((_, false)) => {}
+                            Err(e) => {
+                                tracing::warn!(
+                                    "event coordinator: ensure_monitor_pr_task failed for {owner}/{repo}#{number}: {e}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    })
 }
 
 /// Extract a PR reference string from free-text description.

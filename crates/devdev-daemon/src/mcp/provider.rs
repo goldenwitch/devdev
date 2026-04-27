@@ -8,11 +8,13 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use devdev_tasks::approval::{ApprovalError, ApprovalGate};
 use devdev_tasks::registry::TaskRegistry;
 use devdev_workspace::Fs;
 use tokio::sync::Mutex;
 
-use crate::mcp::{McpProviderError, McpToolProvider, TaskInfo};
+use crate::mcp::{AskKind, AskRequest, AskResponse, McpProviderError, McpToolProvider, TaskInfo};
+use crate::secrets::AgentSecrets;
 
 /// Wraps the daemon's shared `Arc<Mutex<TaskRegistry>>` and
 /// `Arc<Mutex<Fs>>` so the MCP server can both surface task state and
@@ -25,11 +27,31 @@ use crate::mcp::{McpProviderError, McpToolProvider, TaskInfo};
 pub struct DaemonToolProvider {
     tasks: Arc<Mutex<TaskRegistry>>,
     fs: Arc<Mutex<Fs>>,
+    approval_gate: Option<Arc<Mutex<ApprovalGate>>>,
+    agent_secrets: Option<Arc<Mutex<AgentSecrets>>>,
 }
 
 impl DaemonToolProvider {
     pub fn new(tasks: Arc<Mutex<TaskRegistry>>, fs: Arc<Mutex<Fs>>) -> Self {
-        Self { tasks, fs }
+        Self {
+            tasks,
+            fs,
+            approval_gate: None,
+            agent_secrets: None,
+        }
+    }
+
+    /// Wire the approval gate + secrets slot so `devdev_ask` is live.
+    /// Constructed without these, the tool returns a `not configured`
+    /// error — keeping pre-Phase-C tests unaffected.
+    pub fn with_ask(
+        mut self,
+        gate: Arc<Mutex<ApprovalGate>>,
+        secrets: Arc<Mutex<AgentSecrets>>,
+    ) -> Self {
+        self.approval_gate = Some(gate);
+        self.agent_secrets = Some(secrets);
+        self
     }
 }
 
@@ -68,6 +90,63 @@ impl McpToolProvider for DaemonToolProvider {
         fs.write_path(path.as_bytes(), content.as_bytes())
             .map_err(|e| McpProviderError::Other(format!("write_path {path}: {e:?}")))?;
         Ok(())
+    }
+
+    async fn ask(&self, req: AskRequest) -> Result<AskResponse, McpProviderError> {
+        let gate = self
+            .approval_gate
+            .as_ref()
+            .ok_or_else(|| McpProviderError::Other("ask: approval gate not configured".into()))?;
+        let secrets = self
+            .agent_secrets
+            .as_ref()
+            .ok_or_else(|| McpProviderError::Other("ask: secrets slot not configured".into()))?;
+
+        let action = match req.kind {
+            AskKind::PostReview => "post_review",
+            AskKind::PostComment => "post_comment",
+            AskKind::RequestToken => "request_token",
+            AskKind::Question => "question",
+        };
+        let details = serde_json::json!({
+            "summary": req.summary,
+            "payload": req.payload,
+        });
+
+        let outcome = {
+            let mut g = gate.lock().await;
+            g.request_approval(action, details).await
+        };
+
+        match outcome {
+            Ok(()) => {
+                let needs_token = matches!(
+                    req.kind,
+                    AskKind::PostReview | AskKind::PostComment | AskKind::RequestToken
+                );
+                let (token, expires_at) = if needs_token {
+                    let s = secrets.lock().await;
+                    (s.gh_token.clone(), s.token_expires_at_hint())
+                } else {
+                    (None, None)
+                };
+                Ok(AskResponse::Approved {
+                    token,
+                    expires_at,
+                    payload: req.payload,
+                })
+            }
+            Err(ApprovalError::Rejected) => Ok(AskResponse::Rejected {
+                reason: "user rejected".into(),
+            }),
+            Err(ApprovalError::Timeout) => Ok(AskResponse::Timeout),
+            Err(ApprovalError::DryRun { action, details }) => Ok(AskResponse::Rejected {
+                reason: format!("dry-run: {action} {details}"),
+            }),
+            Err(ApprovalError::ChannelClosed) => Err(McpProviderError::Other(
+                "ask: approval channel closed".into(),
+            )),
+        }
     }
 }
 
@@ -154,5 +233,170 @@ mod tests {
         );
         let tasks = provider.tasks_list().await.expect("list");
         assert!(tasks.is_empty());
+    }
+
+    // ── ask: Phase C1 coverage ────────────────────────────────────
+
+    use devdev_tasks::approval::{ApprovalPolicy, ApprovalResponse, approval_channel};
+
+    fn build_provider_with_ask(
+        policy: ApprovalPolicy,
+        timeout: Duration,
+        token: Option<&str>,
+    ) -> (
+        DaemonToolProvider,
+        Arc<Mutex<devdev_tasks::approval::ApprovalHandle>>,
+        Arc<Mutex<AgentSecrets>>,
+    ) {
+        let (gate, handle) = approval_channel(policy, timeout);
+        let gate = Arc::new(Mutex::new(gate));
+        let handle = Arc::new(Mutex::new(handle));
+        let mut secrets = AgentSecrets::default();
+        secrets.set_gh_token(token.map(str::to_string));
+        let secrets = Arc::new(Mutex::new(secrets));
+        let provider = DaemonToolProvider::new(
+            Arc::new(Mutex::new(TaskRegistry::new())),
+            Arc::new(Mutex::new(devdev_workspace::Fs::new())),
+        )
+        .with_ask(gate, Arc::clone(&secrets));
+        (provider, handle, secrets)
+    }
+
+    #[tokio::test]
+    async fn ask_post_review_auto_approve_returns_token() {
+        let (provider, _handle, _secrets) = build_provider_with_ask(
+            ApprovalPolicy::AutoApprove,
+            Duration::from_secs(1),
+            Some("ghp_live_token"),
+        );
+        let resp = provider
+            .ask(AskRequest {
+                kind: AskKind::PostReview,
+                summary: "post review on PR #42".into(),
+                payload: serde_json::json!({ "comment": "looks good" }),
+            })
+            .await
+            .expect("ask succeeds");
+        match resp {
+            AskResponse::Approved {
+                token,
+                expires_at,
+                payload,
+            } => {
+                assert_eq!(token.as_deref(), Some("ghp_live_token"));
+                assert!(expires_at.is_some());
+                assert_eq!(payload["comment"], "looks good");
+            }
+            other => panic!("expected approved, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn ask_question_does_not_surface_token() {
+        let (provider, _h, _s) = build_provider_with_ask(
+            ApprovalPolicy::AutoApprove,
+            Duration::from_secs(1),
+            Some("ghp_live_token"),
+        );
+        let resp = provider
+            .ask(AskRequest {
+                kind: AskKind::Question,
+                summary: "what color?".into(),
+                payload: serde_json::json!({}),
+            })
+            .await
+            .unwrap();
+        match resp {
+            AskResponse::Approved {
+                token, expires_at, ..
+            } => {
+                assert!(token.is_none(), "question should not return token");
+                assert!(expires_at.is_none());
+            }
+            other => panic!("expected approved, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn ask_rejected_returns_reason() {
+        let (provider, handle, _s) =
+            build_provider_with_ask(ApprovalPolicy::Ask, Duration::from_secs(2), Some("tok"));
+        let req = AskRequest {
+            kind: AskKind::PostReview,
+            summary: "x".into(),
+            payload: serde_json::json!({}),
+        };
+        let provider_clone = provider.clone();
+        let ask_task = tokio::spawn(async move { provider_clone.ask(req).await });
+        // Pump the handle: receive the request, then deny it.
+        let pending = {
+            let mut h = handle.lock().await;
+            h.request_rx.recv().await.expect("request arrives")
+        };
+        {
+            let h = handle.lock().await;
+            h.response_tx
+                .send(ApprovalResponse {
+                    id: pending.id.clone(),
+                    approve: false,
+                })
+                .await
+                .unwrap();
+        }
+        let resp = ask_task.await.unwrap().unwrap();
+        assert!(matches!(resp, AskResponse::Rejected { .. }));
+    }
+
+    #[tokio::test]
+    async fn ask_timeout_returns_timeout_status() {
+        let (provider, _handle, _s) =
+            build_provider_with_ask(ApprovalPolicy::Ask, Duration::from_millis(50), None);
+        let resp = provider
+            .ask(AskRequest {
+                kind: AskKind::Question,
+                summary: "stalls".into(),
+                payload: serde_json::json!({}),
+            })
+            .await
+            .unwrap();
+        assert!(matches!(resp, AskResponse::Timeout));
+    }
+
+    #[tokio::test]
+    async fn ask_dry_run_policy_reports_dry_run() {
+        let (provider, _h, _s) =
+            build_provider_with_ask(ApprovalPolicy::DryRun, Duration::from_secs(1), None);
+        let resp = provider
+            .ask(AskRequest {
+                kind: AskKind::PostComment,
+                summary: "drop".into(),
+                payload: serde_json::json!({"comment": "x"}),
+            })
+            .await
+            .unwrap();
+        match resp {
+            AskResponse::Rejected { reason } => {
+                assert!(reason.contains("dry-run"), "reason was {reason}");
+            }
+            other => panic!("expected rejected, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn ask_without_configuration_errors() {
+        // Provider built without `with_ask`.
+        let provider = DaemonToolProvider::new(
+            Arc::new(Mutex::new(TaskRegistry::new())),
+            Arc::new(Mutex::new(devdev_workspace::Fs::new())),
+        );
+        let err = provider
+            .ask(AskRequest {
+                kind: AskKind::Question,
+                summary: "nope".into(),
+                payload: serde_json::json!({}),
+            })
+            .await
+            .expect_err("must error");
+        assert!(format!("{err}").contains("not configured"));
     }
 }
