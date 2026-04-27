@@ -101,25 +101,37 @@ impl RepoWatchTask {
 
             let key = LedgerKey::new(ADAPTER, RESOURCE_TYPE, self.resource_id(pr.number), &hash);
 
-            // Ledger consult — if we've published this exact state
-            // before (across the lifetime of the daemon), skip.
+            // Two independent questions:
+            //   1. Have we already published this exact state hash?
+            //      (`already` — persisted across daemon restarts.)
+            //   2. Is this the first time we've seen this PR number
+            //      *in this task instance*? (`first_in_session` —
+            //      true after every restart, until we observe.)
+            //
+            // A fresh task must always emit `PrOpened` on first
+            // observation so the event coordinator can (re)spawn a
+            // `MonitorPrTask`, even if the ledger already has the
+            // state recorded from a previous run. The ledger only
+            // suppresses *duplicate* records / no-op `PrUpdated`s.
             let already = self
                 .ledger
                 .seen(&key)
                 .map_err(|e| TaskError::PollFailed(format!("ledger.seen: {e}")))?;
-            if already {
+            let first_in_session = !self.last_seen.contains_key(&pr.number);
+
+            if already && !first_in_session {
                 continue;
             }
 
-            let event = if self.last_seen.contains_key(&pr.number) {
-                DaemonEvent::PrUpdated {
+            let event = if first_in_session {
+                DaemonEvent::PrOpened {
                     owner: self.owner.clone(),
                     repo: self.repo.clone(),
                     number: pr.number,
                     head_sha: pr.head_sha.clone(),
                 }
             } else {
-                DaemonEvent::PrOpened {
+                DaemonEvent::PrUpdated {
                     owner: self.owner.clone(),
                     repo: self.repo.clone(),
                     number: pr.number,
@@ -127,24 +139,26 @@ impl RepoWatchTask {
                 }
             };
             self.bus.publish(event);
-            self.ledger
-                .record(
-                    &key,
-                    serde_json::json!({
-                        "head_sha": pr.head_sha,
-                        "updated_at": pr.updated_at,
-                    }),
-                )
-                .map_err(|e| TaskError::PollFailed(format!("ledger.record: {e}")))?;
+            if !already {
+                self.ledger
+                    .record(
+                        &key,
+                        serde_json::json!({
+                            "head_sha": pr.head_sha,
+                            "updated_at": pr.updated_at,
+                        }),
+                    )
+                    .map_err(|e| TaskError::PollFailed(format!("ledger.record: {e}")))?;
+            }
 
             messages.push(TaskMessage::Text(format!(
                 "{} #{} state {}",
                 self.resource_id(pr.number),
                 pr.number,
-                if self.last_seen.contains_key(&pr.number) {
-                    "updated"
-                } else {
+                if first_in_session {
                     "opened"
+                } else {
+                    "updated"
                 }
             )));
         }
@@ -287,7 +301,10 @@ mod tests {
             gh.clone() as Arc<dyn GitHubAdapter>,
             ledger.clone() as Arc<dyn IdempotencyLedger>,
             bus.clone(),
-        );
+        )
+        // Disable the self-throttle for unit tests; we want every
+        // explicit `poll()` call to actually run `do_poll()`.
+        .with_interval(Duration::from_secs(0));
         (t, gh, ledger, bus)
     }
 
@@ -313,7 +330,8 @@ mod tests {
             gh as Arc<dyn GitHubAdapter>,
             ledger as Arc<dyn IdempotencyLedger>,
             bus,
-        );
+        )
+        .with_interval(Duration::from_secs(0));
         t.poll().await.unwrap();
         let evt = rx.recv().await.unwrap();
         assert!(matches!(evt, DaemonEvent::PrOpened { number: 1, .. }));
@@ -332,7 +350,8 @@ mod tests {
             gh as Arc<dyn GitHubAdapter>,
             ledger as Arc<dyn IdempotencyLedger>,
             bus,
-        );
+        )
+        .with_interval(Duration::from_secs(0));
         t.poll().await.unwrap();
         let _ = rx.recv().await.unwrap();
         // Second poll: same SHA + updated_at → no event.
@@ -353,7 +372,8 @@ mod tests {
             gh.clone() as Arc<dyn GitHubAdapter>,
             ledger as Arc<dyn IdempotencyLedger>,
             bus,
-        );
+        )
+        .with_interval(Duration::from_secs(0));
         t.poll().await.unwrap();
         let _ = rx.recv().await.unwrap();
         // Simulate force-push: head_sha changes via mock override.
@@ -377,7 +397,8 @@ mod tests {
             gh_open as Arc<dyn GitHubAdapter>,
             ledger.clone() as Arc<dyn IdempotencyLedger>,
             bus.clone(),
-        );
+        )
+        .with_interval(Duration::from_secs(0));
         t.poll().await.unwrap();
         let _ = rx.recv().await.unwrap();
 
@@ -396,7 +417,7 @@ mod tests {
         let bus = EventBus::new();
         let mut rx = bus.subscribe();
 
-        // First task instance: emits PrOpened.
+        // First task instance: emits PrOpened, records ledger.
         let mut t1 = RepoWatchTask::new(
             "t-1".into(),
             "o",
@@ -404,22 +425,32 @@ mod tests {
             gh.clone() as Arc<dyn GitHubAdapter>,
             ledger.clone() as Arc<dyn IdempotencyLedger>,
             bus.clone(),
-        );
+        )
+        .with_interval(Duration::from_secs(0));
         t1.poll().await.unwrap();
         let _ = rx.recv().await.unwrap();
         drop(t1);
 
-        // Second task instance ("restart"): same ledger, fresh in-memory state.
+        // Second task instance ("restart"): same ledger, fresh
+        // in-memory state. We MUST republish `PrOpened` so the
+        // event coordinator can respawn the per-PR `MonitorPrTask`,
+        // even though the ledger already has the state hash.
         let mut t2 = RepoWatchTask::new(
             "t-1".into(),
             "o",
             "r",
-            gh as Arc<dyn GitHubAdapter>,
-            ledger as Arc<dyn IdempotencyLedger>,
+            gh.clone() as Arc<dyn GitHubAdapter>,
+            ledger.clone() as Arc<dyn IdempotencyLedger>,
             bus,
-        );
+        )
+        .with_interval(Duration::from_secs(0));
         t2.poll().await.unwrap();
-        // Ledger says "seen" — no event.
+        let evt = rx.recv().await.unwrap();
+        assert!(matches!(evt, DaemonEvent::PrOpened { number: 1, .. }));
+
+        // Third poll on the same instance: ledger still has it AND
+        // last_seen has it — no duplicate event.
+        t2.poll().await.unwrap();
         assert!(rx.try_recv().is_err());
     }
 

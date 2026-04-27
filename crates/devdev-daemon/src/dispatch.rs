@@ -205,14 +205,15 @@ impl DispatchContext {
             self.approval_policy
         };
 
-        // If the per-task `auto_approve` overrides the daemon's
-        // policy, swap the active approval channel so `devdev_ask`
-        // bypasses prompts for this task.
-        if policy != self.approval_policy {
-            let (gate, handle) = approval_channel(policy, self.approval_timeout);
-            *self.approval_gate.lock().await = gate;
-            *self.approval_handle.lock().await = handle;
-        }
+        // NOTE: per-task approval policy isolation is not yet
+        // implemented. The MCP `devdev_ask` tool resolves through
+        // the daemon-wide `approval_gate`, so a task-local override
+        // here cannot be safely applied without flipping behaviour
+        // for every other task and tool call. Until we plumb a
+        // session->task mapping through the MCP provider so each
+        // call can pick its own gate, the per-task `auto_approve`
+        // flag is accepted on the wire but treated as a no-op.
+        let _ = policy;
 
         let mut registry = self.tasks.lock().await;
         let task_id = registry.next_id();
