@@ -37,6 +37,28 @@ Works end-to-end and is exercised by tests on every push.
 - Scenario harness: user-surface scenarios drive only the `devdev`
   binary + IPC + checkpoints + documented env vars.
 
+**Repo watch → event pipeline (cap 26 / cap 27)**
+
+- `devdev repo watch <owner>/<repo>` polls GitHub, hashes PR state,
+  consults an append-only NDJSON idempotency ledger, and emits
+  `PrOpened` / `PrUpdated` / `PrClosed` events on an internal
+  `EventBus`. Per-PR `MonitorPrTask`s subscribe and re-prompt the
+  agent on update.
+- `devdev_ask` MCP tool: the universal approval seam. Agent calls it
+  with `kind={post_review,post_comment,request_token,question}`;
+  daemon routes through `ApprovalGate` and — on approval, for the
+  external-action kinds — surfaces a host-derived short-lived
+  `GH_TOKEN` so the agent can run `gh` itself. No typed adapter path.
+
+**Vibe Check (cap 25)**
+
+- `devdev init` runs a scribe session that writes `.devdev/*.md`
+  preference files in the user's voice (one topic per file, append
+  `## Revision <date>` on revisits).
+- `devdev preferences list` discovers preferences across repo /
+  parents / `~/.devdev/` with repo-wins precedence; `devdev
+  preferences edit` opens `$EDITOR`.
+
 **Scenario catalog status**
 
 | ID | Status |
@@ -51,16 +73,14 @@ Works end-to-end and is exercised by tests on every push.
 
 What we're actively working on to close the DevDev-hosting loop.
 
-- **Wire `placeholder_review_fn`.** The agent-callback seam in
-  `crates/devdev-cli/src/daemon_cli.rs` is still a placeholder. Real
-  target: `MonitorPrTask` driving the same seam with real PR state.
 - **Scout routing.** Pick the right model/agent per task class instead
   of one-size-fits-all.
-- **Idempotency ledger.** Durable record of work already done so an
-  agent restart doesn't re-do the same thing.
 - **Full ACP session backend (S03/S04).** Enough plumbing that the
   agent's tool calls and mid-session events are observable from the
   scenario surface.
+- **End-to-end PR shepherding scenario (S07).** Drives `devdev init`
+  → `devdev repo watch` → mock GH adapter → asserts the agent gets
+  re-prompted with preference context on each PR update.
 
 ### Explicitly not on this list
 

@@ -76,6 +76,12 @@ impl AcpSessionBackend {
                 let argv: Vec<&str> = args.iter().map(String::as_str).collect();
                 let client_config = AcpClientConfig {
                     env_overrides: crate::realpath_shim::prepare_nodejs_options(),
+                    // Real agents (Copilot CLI included) can think for
+                    // a long time between session/update notifications,
+                    // especially while running multi-step gh/git plans.
+                    // Keep the idle window generous to avoid killing a
+                    // working agent mid-turn.
+                    idle_timeout: std::time::Duration::from_secs(300),
                     ..AcpClientConfig::default()
                 };
                 let client = AcpClient::connect_process(

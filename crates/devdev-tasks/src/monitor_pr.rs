@@ -1,29 +1,29 @@
-//! MonitorPR task: monitors a GitHub PR, reviews it, watches for changes.
+//! `MonitorPrTask` — event-driven per-PR shepherd.
+//!
+//! Subscribes to the daemon [`EventBus`] on construction and filters
+//! to its own `(owner, repo, number)` triple. On `PrOpened` /
+//! `PrUpdated` it re-prompts the agent via [`AgentRunner`] with the
+//! current diff plus any caller-supplied preference-file paths. On
+//! `PrClosed` the task completes.
+//!
+//! There is no longer any `post_review`/`ApprovalGate` plumbing here.
+//! Posting is the agent's job — it runs `gh` itself, gated by the
+//! `devdev_ask` MCP tool which carries approval and a short-lived
+//! token.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use devdev_integrations::{GitHubAdapter, Review, ReviewComment, ReviewEvent};
-use tokio::sync::Mutex;
+use devdev_integrations::GitHubAdapter;
+use tokio::sync::broadcast::{Receiver, error::TryRecvError};
 
-use crate::approval::{ApprovalError, ApprovalGate};
+use crate::agent::AgentRunner;
+use crate::events::{DaemonEvent, EventBus};
 use crate::pr_ref::PrRef;
-use crate::review::parse_review;
 use crate::task::{Task, TaskError, TaskMessage, TaskStatus};
 
-/// Callback for getting agent reviews. Takes a prompt, returns review text.
-/// This is how MonitorPrTask interacts with the agent without depending on
-/// the daemon crate's SessionHandle directly.
-pub type ReviewFn = Arc<
-    dyn Fn(
-            String,
-        )
-            -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, String>> + Send>>
-        + Send
-        + Sync,
->;
-
-/// A task that monitors a single GitHub PR.
+/// A task that watches a single GitHub PR for changes via the bus.
 pub struct MonitorPrTask {
     id: String,
     pr_ref: PrRef,
@@ -32,8 +32,11 @@ pub struct MonitorPrTask {
     observations: Vec<String>,
     poll_interval: Duration,
     github: Arc<dyn GitHubAdapter>,
-    approval: Arc<Mutex<ApprovalGate>>,
-    review_fn: ReviewFn,
+    runner: Arc<dyn AgentRunner>,
+    rx: Receiver<DaemonEvent>,
+    /// Paths to `.devdev/*.md` preference files (Vibe Check, Phase D).
+    /// Injected verbatim into the prompt; agent reads them on demand.
+    preference_paths: Vec<PathBuf>,
 }
 
 impl MonitorPrTask {
@@ -41,8 +44,8 @@ impl MonitorPrTask {
         id: String,
         pr_ref_str: &str,
         github: Arc<dyn GitHubAdapter>,
-        approval: Arc<Mutex<ApprovalGate>>,
-        review_fn: ReviewFn,
+        runner: Arc<dyn AgentRunner>,
+        bus: &EventBus,
     ) -> Result<Self, TaskError> {
         let pr_ref = PrRef::parse(pr_ref_str)?;
         Ok(Self {
@@ -53,8 +56,9 @@ impl MonitorPrTask {
             observations: Vec::new(),
             poll_interval: Duration::from_secs(60),
             github,
-            approval,
-            review_fn,
+            runner,
+            rx: bus.subscribe(),
+            preference_paths: Vec::new(),
         })
     }
 
@@ -63,19 +67,50 @@ impl MonitorPrTask {
         self
     }
 
+    pub fn with_preferences(mut self, paths: Vec<PathBuf>) -> Self {
+        self.preference_paths = paths;
+        self
+    }
+
     pub fn pr_ref(&self) -> &PrRef {
         &self.pr_ref
     }
 
-    /// Build the prompt for the agent.
-    fn build_prompt(&self, pr_title: &str, pr_body: &str, diff: &str) -> String {
+    pub fn observations(&self) -> &[String] {
+        &self.observations
+    }
+
+    /// Whether an event targets this task's PR.
+    fn matches(&self, ev: &DaemonEvent) -> bool {
+        match ev.pr_target() {
+            Some((o, r, n)) => {
+                o == self.pr_ref.owner && r == self.pr_ref.repo && n == self.pr_ref.number
+            }
+            None => false,
+        }
+    }
+
+    fn build_prompt(&self, kind: &str, pr_title: &str, pr_body: &str, diff: &str) -> String {
         let mut prompt = format!(
-            "You are reviewing PR #{} in {}/{}.\n\
+            "PR {} was {} (head_sha={}).\n\
              Title: {}\n\
              Description: {}\n\n\
              Diff:\n```\n{}\n```\n\n",
-            self.pr_ref.number, self.pr_ref.owner, self.pr_ref.repo, pr_title, pr_body, diff,
+            self.pr_ref,
+            kind,
+            self.last_sha.as_deref().unwrap_or("?"),
+            pr_title,
+            pr_body,
+            diff,
         );
+
+        if !self.preference_paths.is_empty() {
+            prompt.push_str("Preference files (read on demand):\n");
+            for p in &self.preference_paths {
+                prompt.push_str(&format!("- {}\n", p.display()));
+            }
+            prompt.push('\n');
+        }
 
         if !self.observations.is_empty() {
             prompt.push_str("Prior observations:\n");
@@ -86,120 +121,81 @@ impl MonitorPrTask {
         }
 
         prompt.push_str(
-            "Review this PR. For inline comments, use the format [file:line] comment.\n\
-             Provide a summary of your findings.",
+            "Review this PR. To post a comment or review, call the \
+             `devdev_ask` tool with `kind=post_review`; on approval \
+             you'll receive a short-lived token to run `gh` yourself.",
         );
 
         prompt
     }
 
-    async fn do_review(&mut self) -> Result<Vec<TaskMessage>, TaskError> {
+    async fn handle_event(&mut self, ev: DaemonEvent) -> Result<Vec<TaskMessage>, TaskError> {
+        match ev {
+            DaemonEvent::PrClosed { merged, .. } => {
+                self.status = TaskStatus::Completed;
+                Ok(vec![TaskMessage::Text(format!(
+                    "PR {} closed (merged={merged}).",
+                    self.pr_ref
+                ))])
+            }
+            DaemonEvent::PrOpened { head_sha, .. } => {
+                self.last_sha = Some(head_sha);
+                self.do_prompt("opened").await
+            }
+            DaemonEvent::PrUpdated { head_sha, .. } => {
+                self.last_sha = Some(head_sha);
+                self.do_prompt("updated").await
+            }
+        }
+    }
+
+    async fn do_prompt(&mut self, kind: &str) -> Result<Vec<TaskMessage>, TaskError> {
         let o = &self.pr_ref.owner;
         let r = &self.pr_ref.repo;
         let n = self.pr_ref.number;
 
-        // Fetch PR info.
         let pr = self
             .github
             .get_pr(o, r, n)
             .await
-            .map_err(|e| TaskError::PollFailed(format!("failed to fetch PR: {e}")))?;
+            .map_err(|e| TaskError::PollFailed(format!("get_pr: {e}")))?;
 
-        // Check if merged/closed.
-        match pr.state {
-            devdev_integrations::PrState::Merged | devdev_integrations::PrState::Closed => {
-                self.status = TaskStatus::Completed;
-                return Ok(vec![TaskMessage::Text(format!(
-                    "PR {} is now {:?}.",
-                    self.pr_ref, pr.state
-                ))]);
-            }
-            _ => {}
+        if matches!(
+            pr.state,
+            devdev_integrations::PrState::Closed | devdev_integrations::PrState::Merged
+        ) {
+            self.status = TaskStatus::Completed;
+            return Ok(vec![TaskMessage::Text(format!(
+                "PR {} is now {:?}.",
+                self.pr_ref, pr.state
+            ))]);
         }
 
-        // Update SHA.
-        self.last_sha = Some(pr.head_sha.clone());
-
-        // Fetch diff.
         let diff = self
             .github
             .get_pr_diff(o, r, n)
             .await
-            .map_err(|e| TaskError::PollFailed(format!("failed to fetch diff: {e}")))?;
+            .map_err(|e| TaskError::PollFailed(format!("get_pr_diff: {e}")))?;
 
-        // Build prompt and get review.
-        let prompt = self.build_prompt(&pr.title, pr.body.as_deref().unwrap_or(""), &diff);
-
-        let review_text = (self.review_fn)(prompt)
+        let prompt = self.build_prompt(kind, &pr.title, pr.body.as_deref().unwrap_or(""), &diff);
+        let reply = self
+            .runner
+            .run_prompt(prompt)
             .await
-            .map_err(|e| TaskError::PollFailed(format!("agent review failed: {e}")))?;
+            .map_err(|e| TaskError::PollFailed(format!("agent: {e}")))?;
 
-        // Parse review.
-        let parsed = parse_review(&review_text);
-
-        // Store observation.
-        let summary = if parsed.body.len() > 200 {
-            format!("{}...", &parsed.body[..200])
+        let summary = if reply.len() > 200 {
+            format!("{}…", &reply[..200])
         } else {
-            parsed.body.clone()
+            reply.clone()
         };
         self.observations.push(summary);
+        self.status = TaskStatus::Idle;
 
-        // Build GitHub Review.
-        let review = Review {
-            event: ReviewEvent::Comment,
-            body: parsed.body.clone(),
-            comments: parsed
-                .comments
-                .iter()
-                .map(|c| ReviewComment {
-                    path: c.path.clone(),
-                    line: c.line,
-                    body: c.body.clone(),
-                })
-                .collect(),
-        };
-
-        // Request approval to post.
-        let approval_result = {
-            let mut gate = self.approval.lock().await;
-            gate.request_approval(
-                "post_review",
-                serde_json::json!({
-                    "repo": format!("{o}/{r}"),
-                    "pr": n,
-                    "comments": review.comments.len(),
-                }),
-            )
-            .await
-        };
-
-        match approval_result {
-            Ok(()) => {
-                self.github
-                    .post_review(o, r, n, review)
-                    .await
-                    .map_err(|e| TaskError::PollFailed(format!("failed to post review: {e}")))?;
-
-                Ok(vec![TaskMessage::Text(format!(
-                    "Review posted for {}:\n{review_text}",
-                    self.pr_ref
-                ))])
-            }
-            Err(ApprovalError::DryRun { .. }) => Ok(vec![TaskMessage::Text(format!(
-                "[dry-run] Would post review for {}:\n{review_text}",
-                self.pr_ref
-            ))]),
-            Err(ApprovalError::Rejected) => Ok(vec![TaskMessage::Text(format!(
-                "Review rejected by user for {}:\n{review_text}",
-                self.pr_ref
-            ))]),
-            Err(ApprovalError::Timeout) => Ok(vec![TaskMessage::Text(format!(
-                "Approval timed out for {}. Review not posted.",
-                self.pr_ref
-            ))]),
-            Err(e) => Err(TaskError::PollFailed(format!("approval error: {e}"))),
-        }
+        Ok(vec![TaskMessage::Text(format!(
+            "PR {} ({kind}) → agent reply:\n{reply}",
+            self.pr_ref
+        ))])
     }
 }
 
@@ -226,33 +222,29 @@ impl Task for MonitorPrTask {
             return Ok(vec![]);
         }
 
-        match &self.status {
-            TaskStatus::Created | TaskStatus::Polling => {
-                // First review.
-                self.do_review().await
-            }
-            TaskStatus::Idle => {
-                // Check for new commits.
-                let o = &self.pr_ref.owner;
-                let r = &self.pr_ref.repo;
-                let n = self.pr_ref.number;
-
-                let current_sha = self
-                    .github
-                    .get_pr_head_sha(o, r, n)
-                    .await
-                    .map_err(|e| TaskError::PollFailed(format!("failed to check SHA: {e}")))?;
-
-                if self.last_sha.as_deref() == Some(&current_sha) {
-                    // No change.
-                    return Ok(vec![]);
+        let mut messages = Vec::new();
+        loop {
+            match self.rx.try_recv() {
+                Ok(ev) => {
+                    if self.matches(&ev) {
+                        let mut m = self.handle_event(ev).await?;
+                        messages.append(&mut m);
+                        if self.status.is_terminal() {
+                            break;
+                        }
+                    }
                 }
-
-                // New commits — re-review.
-                self.do_review().await
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Closed) => break,
+                Err(TryRecvError::Lagged(n)) => {
+                    messages.push(TaskMessage::Text(format!(
+                        "[warning] event bus lagged {n} messages — possible missed events for {}",
+                        self.pr_ref
+                    )));
+                }
             }
-            _ => Ok(vec![]),
         }
+        Ok(messages)
     }
 
     fn serialize(&self) -> Result<serde_json::Value, TaskError> {

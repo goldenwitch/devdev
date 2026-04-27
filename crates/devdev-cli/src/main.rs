@@ -5,7 +5,9 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 
 use devdev_cli::daemon_cli::{
-    DownArgs, SendArgs, StatusArgs, UpArgs, run_down, run_send, run_status, run_up,
+    DownArgs, InitArgs, PreferencesEditArgs, PreferencesListArgs, RepoUnwatchArgs, RepoWatchArgs,
+    SendArgs, StatusArgs, UpArgs, run_down, run_init, run_preferences_edit, run_preferences_list,
+    run_repo_unwatch, run_repo_watch, run_send, run_status, run_up,
 };
 
 #[derive(Parser, Debug)]
@@ -25,6 +27,30 @@ enum Command {
     Send(SendArgs),
     /// Print daemon status.
     Status(StatusArgs),
+    /// Run the Vibe Check scribe to record `.devdev/*.md` preferences.
+    Init(InitArgs),
+    /// Repository watch operations.
+    #[command(subcommand)]
+    Repo(RepoCommand),
+    /// Inspect or edit `.devdev/*.md` preference files.
+    #[command(subcommand)]
+    Preferences(PreferencesCommand),
+}
+
+#[derive(Subcommand, Debug)]
+enum RepoCommand {
+    /// Start polling a `<owner>/<repo>` for PR events.
+    Watch(RepoWatchArgs),
+    /// Stop polling a `<owner>/<repo>`.
+    Unwatch(RepoUnwatchArgs),
+}
+
+#[derive(Subcommand, Debug)]
+enum PreferencesCommand {
+    /// List discovered preference files.
+    List(PreferencesListArgs),
+    /// Open `$EDITOR` on a preference file (creates one if absent).
+    Edit(PreferencesEditArgs),
 }
 
 fn main() -> ExitCode {
@@ -50,6 +76,11 @@ fn main() -> ExitCode {
         Command::Down(args) => rt.block_on(run_down(args)),
         Command::Send(args) => rt.block_on(run_send(args)),
         Command::Status(args) => rt.block_on(run_status(args)),
+        Command::Init(args) => rt.block_on(run_init(args)),
+        Command::Repo(RepoCommand::Watch(args)) => rt.block_on(run_repo_watch(args)),
+        Command::Repo(RepoCommand::Unwatch(args)) => rt.block_on(run_repo_unwatch(args)),
+        Command::Preferences(PreferencesCommand::List(args)) => run_preferences_list(args),
+        Command::Preferences(PreferencesCommand::Edit(args)) => run_preferences_edit(args),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,

@@ -7,9 +7,12 @@
 pub mod checkpoint;
 pub mod dispatch;
 pub mod ipc;
+pub mod ledger;
 pub mod mcp;
 pub mod pid;
 pub mod router;
+pub mod runner;
+pub mod secrets;
 pub mod server;
 
 use std::path::PathBuf;

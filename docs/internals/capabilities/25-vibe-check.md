@@ -1,7 +1,7 @@
 ---
 id: vibe-check
 title: "Vibe Check — Preference Authoring"
-status: not-started
+status: shipped
 type: composition
 phase: 5
 crate: devdev-cli
@@ -12,7 +12,16 @@ effort: L
 
 # P5-01 — Vibe Check (Preference Authoring)
 
+**Status: shipped (Phase D).** Resolved questions captured below.
+
 The first of the two pillars from `spirit/outline.md` §1 ("The Vibe Check"). DevDev interviews the user in natural language and writes their technical preferences out as plain Markdown files in a `.devdev/` directory at the workspace root. No YAML schemas, no DSLs — file-scoped Markdown documents that the Scout (P5-02) and the Heavy (existing ACP path) can read directly.
+
+## Resolved
+
+- **Location:** `.devdev/` is searched in the workdir, all ancestors, and `~/.devdev/`. Repo-wins, then parent, then home, dedup by title (earliest layer wins). See `crates/devdev-cli/src/preferences.rs`.
+- **Scribe prompt:** lives at `crates/devdev-cli/src/vibe_check_prompt.md`, embedded into the binary via `include_str!`. `devdev init` ships it as the session preamble and runs a stdin REPL against the daemon's ACP session.
+- **Revision behaviour:** prompt instructs the scribe to append `## Revision <date>` sections rather than overwrite — enforced socially via the prompt, not by the file layer.
+- **Surfacing into PR review:** the per-PR `MonitorPrTask` carries a `Vec<PathBuf>` of preference paths (`with_preferences`); the prompt lists them so the agent reads them on demand via the existing MCP `fs/*` tools. Auto-injection from dispatch is deferred (would require relocating the loader to break a daemon→cli cycle).
 
 ## Scope
 
@@ -31,9 +40,7 @@ The first of the two pillars from `spirit/outline.md` §1 ("The Vibe Check"). De
 
 ## Open Questions
 
-- Should `.devdev/` live in the repo (tracked, shareable) or in the user's home (`~/.devdev/`, private)? Outline says "personal", suggesting home; PR review use cases suggest repo. **Resolution path:** support both — repo-local takes precedence over home, like `.gitconfig`.
-- What's the scribe's prompt? Probably a small canned system prompt that says "you are interviewing the user about their coding preferences; write one Markdown file per distinct topic; keep titles short and prose conversational."
-- What does the scribe do when the user says something contradictory to an existing file? Append a "Revision (date)" section, not silently overwrite.
+*(All previously open questions resolved — see Resolved section above.)*
 
 ## Dependencies
 

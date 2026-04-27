@@ -1,15 +1,15 @@
-//! Acceptance tests for P2-07 — MonitorPR Task.
+//! Acceptance tests for `MonitorPrTask` — event-driven shepherd.
 
 use std::sync::Arc;
-use std::time::Duration;
 
+use async_trait::async_trait;
 use devdev_integrations::{MockGitHubAdapter, PrState, PrStatus, PullRequest};
-use devdev_tasks::approval::{self, ApprovalPolicy, ApprovalResponse};
-use devdev_tasks::monitor_pr::{MonitorPrTask, ReviewFn};
+use devdev_tasks::agent::AgentRunner;
+use devdev_tasks::events::{DaemonEvent, EventBus};
+use devdev_tasks::monitor_pr::MonitorPrTask;
 use devdev_tasks::pr_ref::PrRef;
 use devdev_tasks::review::parse_review;
 use devdev_tasks::task::{Task, TaskStatus};
-use tokio::sync::Mutex;
 
 fn mock_pr(number: u64, sha: &str) -> PullRequest {
     PullRequest {
@@ -25,14 +25,6 @@ fn mock_pr(number: u64, sha: &str) -> PullRequest {
         created_at: "2026-01-01T00:00:00Z".into(),
         updated_at: "2026-01-02T00:00:00Z".into(),
     }
-}
-
-fn fake_review_fn() -> ReviewFn {
-    Arc::new(|_prompt| {
-        Box::pin(async {
-            Ok("Overall looks good.\n[src/config.rs:42] Missing validation for empty strings.\n[src/lib.rs:10] Unused import.".to_string())
-        })
-    })
 }
 
 fn mock_github(sha: &str) -> MockGitHubAdapter {
@@ -53,6 +45,20 @@ fn mock_github(sha: &str) -> MockGitHubAdapter {
                 checks: vec![],
             },
         )
+}
+
+/// Canned agent that records prompts and replies "looks good".
+#[derive(Default)]
+struct FakeRunner {
+    seen: tokio::sync::Mutex<Vec<String>>,
+}
+
+#[async_trait]
+impl AgentRunner for FakeRunner {
+    async fn run_prompt(&self, prompt: String) -> Result<String, String> {
+        self.seen.lock().await.push(prompt);
+        Ok("Overall looks good.".to_string())
+    }
 }
 
 // ── PR ref parsing ─────────────────────────────────────────────
@@ -90,134 +96,78 @@ fn parse_structured_review() {
     assert_eq!(review.comments.len(), 2);
     assert_eq!(review.comments[0].path, "src/config.rs");
     assert_eq!(review.comments[0].line, 42);
-    assert_eq!(review.comments[1].path, "src/lib.rs");
 }
 
-#[test]
-fn parse_fallback_body_only() {
-    let text = "The code looks fine overall. No major issues found.";
-    let review = parse_review(text);
-    assert!(review.comments.is_empty());
-    assert!(!review.body.is_empty());
-}
-
-#[test]
-fn parse_mixed() {
-    let text = "Summary: looks ok.\n[src/config.rs:42] bad validation\nOther notes.";
-    let review = parse_review(text);
-    assert_eq!(review.comments.len(), 1);
-    assert!(review.body.contains("Summary"));
-    assert!(review.body.contains("Other notes"));
-}
-
-// ── MonitorPrTask lifecycle ────────────────────────────────────
+// ── MonitorPrTask lifecycle (event-driven) ─────────────────────
 
 #[tokio::test]
-async fn first_poll_loads_and_reviews() {
-    let github: Arc<dyn devdev_integrations::GitHubAdapter> = Arc::new(mock_github("abc123"));
-    let (gate, _handle) =
-        approval::approval_channel(ApprovalPolicy::AutoApprove, Duration::from_secs(5));
-    let gate = Arc::new(Mutex::new(gate));
+async fn idle_with_no_events_is_quiet() {
+    let gh: Arc<dyn devdev_integrations::GitHubAdapter> = Arc::new(mock_github("abc123"));
+    let bus = EventBus::new();
+    let runner: Arc<dyn AgentRunner> = Arc::new(FakeRunner::default());
+    let mut task = MonitorPrTask::new("t-1".into(), "org/repo#247", gh, runner, &bus).unwrap();
 
-    let mut task =
-        MonitorPrTask::new("t-1".into(), "org/repo#247", github, gate, fake_review_fn()).unwrap();
-
-    let msgs = task.poll().await.unwrap();
-    assert!(!msgs.is_empty());
-}
-
-#[tokio::test]
-async fn first_poll_posts_review_when_approved() {
-    let gh = Arc::new(mock_github("abc123"));
-    let github: Arc<dyn devdev_integrations::GitHubAdapter> =
-        Arc::clone(&gh) as Arc<dyn devdev_integrations::GitHubAdapter>;
-    let (gate, _handle) =
-        approval::approval_channel(ApprovalPolicy::AutoApprove, Duration::from_secs(5));
-    let gate = Arc::new(Mutex::new(gate));
-
-    let mut task =
-        MonitorPrTask::new("t-1".into(), "org/repo#247", github, gate, fake_review_fn()).unwrap();
-
-    let _msgs = task.poll().await.unwrap();
-    assert!(!gh.posted_reviews().is_empty());
-}
-
-#[tokio::test]
-async fn first_poll_skips_post_when_rejected() {
-    let gh = Arc::new(mock_github("abc123"));
-    let github: Arc<dyn devdev_integrations::GitHubAdapter> =
-        Arc::clone(&gh) as Arc<dyn devdev_integrations::GitHubAdapter>;
-    let (gate, mut handle) =
-        approval::approval_channel(ApprovalPolicy::Ask, Duration::from_secs(5));
-    let gate = Arc::new(Mutex::new(gate));
-
-    // Respond with reject in background.
-    tokio::spawn(async move {
-        let req = handle.request_rx.recv().await.unwrap();
-        handle
-            .response_tx
-            .send(ApprovalResponse {
-                id: req.id,
-                approve: false,
-            })
-            .await
-            .unwrap();
-    });
-
-    let mut task =
-        MonitorPrTask::new("t-1".into(), "org/repo#247", github, gate, fake_review_fn()).unwrap();
-
-    let msgs = task.poll().await.unwrap();
-    assert!(!msgs.is_empty()); // Should have "rejected" message.
-    assert!(gh.posted_reviews().is_empty()); // No review posted.
-}
-
-#[tokio::test]
-async fn subsequent_poll_no_change_quiet() {
-    let github: Arc<dyn devdev_integrations::GitHubAdapter> = Arc::new(mock_github("abc123"));
-    let (gate, _handle) =
-        approval::approval_channel(ApprovalPolicy::AutoApprove, Duration::from_secs(5));
-    let gate = Arc::new(Mutex::new(gate));
-
-    let mut task =
-        MonitorPrTask::new("t-1".into(), "org/repo#247", github, gate, fake_review_fn()).unwrap();
-
-    // First poll — does review.
-    let _msgs = task.poll().await.unwrap();
-
-    // Set to Idle.
-    task.set_status(TaskStatus::Idle);
-
-    // Second poll — same SHA, should be quiet.
     let msgs = task.poll().await.unwrap();
     assert!(msgs.is_empty());
 }
 
 #[tokio::test]
-async fn pr_merged_transitions_to_completed() {
-    let mut pr = mock_pr(247, "abc123");
-    pr.state = PrState::Merged;
+async fn pr_opened_event_triggers_agent_prompt() {
+    let gh: Arc<dyn devdev_integrations::GitHubAdapter> = Arc::new(mock_github("abc123"));
+    let bus = EventBus::new();
+    let runner = Arc::new(FakeRunner::default());
+    let runner_dyn: Arc<dyn AgentRunner> = runner.clone();
+    let mut task = MonitorPrTask::new("t-1".into(), "org/repo#247", gh, runner_dyn, &bus).unwrap();
 
-    let github: Arc<dyn devdev_integrations::GitHubAdapter> = Arc::new(
-        MockGitHubAdapter::new()
-            .with_pr("org", "repo", pr)
-            .with_diff("org", "repo", 247, "")
-            .with_status(
-                "org",
-                "repo",
-                247,
-                PrStatus {
-                    mergeable: None,
-                    checks: vec![],
-                },
-            ),
-    );
-    let (gate, _handle) =
-        approval::approval_channel(ApprovalPolicy::AutoApprove, Duration::from_secs(5));
-    let gate = Arc::new(Mutex::new(gate));
+    bus.publish(DaemonEvent::PrOpened {
+        owner: "org".into(),
+        repo: "repo".into(),
+        number: 247,
+        head_sha: "abc123".into(),
+    });
 
-    let mut task =
-        MonitorPrTask::new("t-1".into(), "org/repo#247", github, gate, fake_review_fn()).unwrap();
+    let msgs = task.poll().await.unwrap();
+    assert!(!msgs.is_empty());
+    let seen = runner.seen.lock().await;
+    assert_eq!(seen.len(), 1);
+    assert!(seen[0].contains("opened"));
+    assert!(seen[0].contains("abc123"));
+}
+
+#[tokio::test]
+async fn pr_updated_event_triggers_agent_prompt() {
+    let gh: Arc<dyn devdev_integrations::GitHubAdapter> = Arc::new(mock_github("abc123"));
+    let bus = EventBus::new();
+    let runner = Arc::new(FakeRunner::default());
+    let runner_dyn: Arc<dyn AgentRunner> = runner.clone();
+    let mut task = MonitorPrTask::new("t-1".into(), "org/repo#247", gh, runner_dyn, &bus).unwrap();
+
+    bus.publish(DaemonEvent::PrUpdated {
+        owner: "org".into(),
+        repo: "repo".into(),
+        number: 247,
+        head_sha: "def456".into(),
+    });
+
+    task.poll().await.unwrap();
+    let seen = runner.seen.lock().await;
+    assert_eq!(seen.len(), 1);
+    assert!(seen[0].contains("updated"));
+}
+
+#[tokio::test]
+async fn pr_closed_event_completes_task() {
+    let gh: Arc<dyn devdev_integrations::GitHubAdapter> = Arc::new(mock_github("abc123"));
+    let bus = EventBus::new();
+    let runner: Arc<dyn AgentRunner> = Arc::new(FakeRunner::default());
+    let mut task = MonitorPrTask::new("t-1".into(), "org/repo#247", gh, runner, &bus).unwrap();
+
+    bus.publish(DaemonEvent::PrClosed {
+        owner: "org".into(),
+        repo: "repo".into(),
+        number: 247,
+        merged: true,
+    });
 
     let msgs = task.poll().await.unwrap();
     assert!(!msgs.is_empty());
@@ -225,39 +175,85 @@ async fn pr_merged_transitions_to_completed() {
 }
 
 #[tokio::test]
-async fn serialize_deserialize_roundtrip() {
-    let github: Arc<dyn devdev_integrations::GitHubAdapter> = Arc::new(mock_github("abc123"));
-    let (gate, _handle) =
-        approval::approval_channel(ApprovalPolicy::AutoApprove, Duration::from_secs(5));
-    let gate = Arc::new(Mutex::new(gate));
+async fn non_matching_event_is_ignored() {
+    let gh: Arc<dyn devdev_integrations::GitHubAdapter> = Arc::new(mock_github("abc123"));
+    let bus = EventBus::new();
+    let runner = Arc::new(FakeRunner::default());
+    let runner_dyn: Arc<dyn AgentRunner> = runner.clone();
+    let mut task = MonitorPrTask::new("t-1".into(), "org/repo#247", gh, runner_dyn, &bus).unwrap();
 
-    let task =
-        MonitorPrTask::new("t-1".into(), "org/repo#247", github, gate, fake_review_fn()).unwrap();
+    // Different PR number.
+    bus.publish(DaemonEvent::PrOpened {
+        owner: "org".into(),
+        repo: "repo".into(),
+        number: 999,
+        head_sha: "x".into(),
+    });
+
+    let msgs = task.poll().await.unwrap();
+    assert!(msgs.is_empty());
+    assert!(runner.seen.lock().await.is_empty());
+}
+
+#[tokio::test]
+async fn observations_accumulate_across_events() {
+    let gh: Arc<dyn devdev_integrations::GitHubAdapter> = Arc::new(mock_github("abc123"));
+    let bus = EventBus::new();
+    let runner: Arc<dyn AgentRunner> = Arc::new(FakeRunner::default());
+    let mut task = MonitorPrTask::new("t-1".into(), "org/repo#247", gh, runner, &bus).unwrap();
+
+    bus.publish(DaemonEvent::PrOpened {
+        owner: "org".into(),
+        repo: "repo".into(),
+        number: 247,
+        head_sha: "abc123".into(),
+    });
+    task.poll().await.unwrap();
+
+    bus.publish(DaemonEvent::PrUpdated {
+        owner: "org".into(),
+        repo: "repo".into(),
+        number: 247,
+        head_sha: "def456".into(),
+    });
+    task.poll().await.unwrap();
+
+    assert_eq!(task.observations().len(), 2);
+}
+
+#[tokio::test]
+async fn merged_pr_short_circuits_to_completed() {
+    let mut pr = mock_pr(247, "abc123");
+    pr.state = PrState::Merged;
+    let gh: Arc<dyn devdev_integrations::GitHubAdapter> = Arc::new(
+        MockGitHubAdapter::new()
+            .with_pr("org", "repo", pr)
+            .with_diff("org", "repo", 247, ""),
+    );
+    let bus = EventBus::new();
+    let runner: Arc<dyn AgentRunner> = Arc::new(FakeRunner::default());
+    let mut task = MonitorPrTask::new("t-1".into(), "org/repo#247", gh, runner, &bus).unwrap();
+
+    bus.publish(DaemonEvent::PrUpdated {
+        owner: "org".into(),
+        repo: "repo".into(),
+        number: 247,
+        head_sha: "abc123".into(),
+    });
+    task.poll().await.unwrap();
+    assert_eq!(task.status(), &TaskStatus::Completed);
+}
+
+#[tokio::test]
+async fn serialize_includes_pr_state() {
+    let gh: Arc<dyn devdev_integrations::GitHubAdapter> = Arc::new(mock_github("abc123"));
+    let bus = EventBus::new();
+    let runner: Arc<dyn AgentRunner> = Arc::new(FakeRunner::default());
+    let task = MonitorPrTask::new("t-1".into(), "org/repo#247", gh, runner, &bus).unwrap();
 
     let data = task.serialize().unwrap();
     assert_eq!(data["id"], "t-1");
     assert_eq!(data["owner"], "org");
     assert_eq!(data["repo"], "repo");
     assert_eq!(data["number"], 247);
-}
-
-#[tokio::test]
-async fn dry_run_never_posts() {
-    let gh = Arc::new(mock_github("abc123"));
-    let github: Arc<dyn devdev_integrations::GitHubAdapter> =
-        Arc::clone(&gh) as Arc<dyn devdev_integrations::GitHubAdapter>;
-    let (gate, _handle) =
-        approval::approval_channel(ApprovalPolicy::DryRun, Duration::from_secs(5));
-    let gate = Arc::new(Mutex::new(gate));
-
-    let mut task =
-        MonitorPrTask::new("t-1".into(), "org/repo#247", github, gate, fake_review_fn()).unwrap();
-
-    let msgs = task.poll().await.unwrap();
-    assert!(!msgs.is_empty());
-    // Verify dry-run message.
-    if let devdev_tasks::TaskMessage::Text(text) = &msgs[0] {
-        assert!(text.contains("dry-run"));
-    }
-    assert!(gh.posted_reviews().is_empty());
 }

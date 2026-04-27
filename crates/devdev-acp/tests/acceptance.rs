@@ -72,7 +72,7 @@ fn session_update_tool_call_roundtrip() {
         tool_call_id: "tc-1".into(),
         title: "Read file".into(),
         kind: ToolCallKind::Read,
-        status: ToolCallStatus::Completed,
+        status: Some(ToolCallStatus::Completed),
         raw_input: Some(serde_json::json!({"path": "/foo.rs"})),
     });
     let json = serde_json::to_string(&variant).unwrap();
@@ -85,7 +85,7 @@ fn session_update_tool_call_roundtrip() {
 fn session_update_tool_call_update_roundtrip() {
     let variant = SessionUpdate::ToolCallUpdate(ToolCallUpdate {
         tool_call_id: "tc-1".into(),
-        status: ToolCallStatus::Failed,
+        status: Some(ToolCallStatus::Failed),
         output: Some("error: not found".into()),
     });
     let json = serde_json::to_string(&variant).unwrap();

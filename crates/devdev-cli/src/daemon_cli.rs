@@ -14,11 +14,10 @@
 //! * The [`AcpSessionBackend`](crate::acp_backend::AcpSessionBackend)
 //!   is live — `devdev send` spawns `copilot --acp --allow-all-tools`,
 //!   multiplexes sessions, and surfaces agent replies (proven by the
-//!   gated `live_mcp` tests). The remaining stub is
-//!   [`placeholder_review_fn`]: `MonitorPrTask`'s review callback
-//!   returns an empty string, so `task/add monitor_pr` succeeds but
-//!   posts no review text. Wiring it to a per-task router session is
-//!   cap 22's work.
+//!   gated `live_mcp` tests). MonitorPr tasks now drive the agent
+//!   via `devdev_daemon::runner::RouterRunner`, which holds one
+//!   session per task and forwards prompts produced by `EventBus`
+//!   triggers (PR opened/updated/closed).
 //! * `ApprovalPolicy::AutoApprove` is hard-wired; approval-gate UX
 //!   arrives with the TUI work.
 
@@ -30,14 +29,15 @@ use anyhow::{Context, Result, anyhow};
 use clap::Parser;
 use tokio::sync::{Mutex, watch};
 
-use devdev_daemon::dispatch::DispatchContext;
+use devdev_daemon::dispatch::{DispatchContext, spawn_event_coordinator};
 use devdev_daemon::ipc::{IpcClient, IpcServer, read_port};
+use devdev_daemon::ledger::NdjsonLedger;
 use devdev_daemon::mcp::{DaemonToolProvider, McpServer};
 use devdev_daemon::router::SessionRouter;
 use devdev_daemon::{Daemon, DaemonConfig, DaemonError, server};
 use devdev_integrations::{GitHubAdapter, LiveGitHubAdapter, MockGitHubAdapter};
 use devdev_tasks::approval::{ApprovalPolicy, approval_channel};
-use devdev_tasks::monitor_pr::ReviewFn;
+use devdev_tasks::events::EventBus;
 use devdev_tasks::registry::TaskRegistry;
 
 use crate::acp_backend::AcpSessionBackend;
@@ -107,6 +107,69 @@ pub struct StatusArgs {
     pub json: bool,
 }
 
+#[derive(Parser, Debug, Clone)]
+pub struct RepoWatchArgs {
+    #[arg(long)]
+    pub data_dir: Option<PathBuf>,
+
+    /// Override poll interval (default: 60 seconds).
+    #[arg(long)]
+    pub poll_interval_secs: Option<u64>,
+
+    /// Repository in `owner/repo` form.
+    pub repo: String,
+}
+
+#[derive(Parser, Debug, Clone)]
+pub struct RepoUnwatchArgs {
+    #[arg(long)]
+    pub data_dir: Option<PathBuf>,
+
+    /// Repository in `owner/repo` form.
+    pub repo: String,
+}
+
+#[derive(Parser, Debug, Clone)]
+pub struct InitArgs {
+    #[arg(long)]
+    pub data_dir: Option<PathBuf>,
+
+    /// Working directory whose `.devdev/` will receive preference
+    /// files. Defaults to the current directory.
+    #[arg(long)]
+    pub workdir: Option<PathBuf>,
+
+    /// End the conversation after one round-trip (used by tests).
+    #[arg(long, hide = true)]
+    pub one_shot: bool,
+}
+
+#[derive(Parser, Debug, Clone)]
+pub struct PreferencesListArgs {
+    /// Working directory to scan for `.devdev/*.md`. Defaults to CWD.
+    #[arg(long)]
+    pub workdir: Option<PathBuf>,
+
+    /// Skip the home (`~/.devdev/`) layer.
+    #[arg(long)]
+    pub no_home: bool,
+
+    /// Emit JSON (`[{path, title, layer}]`) instead of a human table.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Parser, Debug, Clone)]
+pub struct PreferencesEditArgs {
+    /// Title (matched case-insensitively against `# Title` lines) or
+    /// file stem.
+    pub name: String,
+
+    /// Working directory to scan. Defaults to CWD.
+    #[arg(long)]
+    pub workdir: Option<PathBuf>,
+}
+
 // ─── Helpers ───────────────────────────────────────────────────
 
 fn resolve_data_dir(explicit: Option<PathBuf>) -> PathBuf {
@@ -133,12 +196,9 @@ fn select_github_adapter(flag: Option<&str>) -> Arc<dyn GitHubAdapter> {
     }
 }
 
-/// Placeholder review callback. TODO: swap for a real router-backed
-/// review once `AcpSessionBackend` is wired.
-fn placeholder_review_fn() -> ReviewFn {
-    Arc::new(|_prompt: String| Box::pin(async move { Ok(String::new()) }))
-}
-
+/// Helper alias used while the agent integration evolved; the actual
+/// agent seam is now [`devdev_daemon::runner::RouterRunner`], built
+/// per-task in [`DispatchContext::handle_task_add`].
 async fn connect_ipc(data_dir: &Path) -> Result<IpcClient> {
     let port = read_port(data_dir)
         .with_context(|| format!("reading port file in {}", data_dir.display()))?
@@ -199,7 +259,33 @@ pub async fn run_up(args: UpArgs) -> Result<()> {
     // daemon's `Arc<Mutex<Fs>>` so an agent-driven `devdev_fs_write`
     // and a user-driven `fs/read` IPC call observe the same bytes.
     let fs = Arc::clone(&daemon.fs);
-    let mcp_provider = Arc::new(DaemonToolProvider::new(Arc::clone(&tasks), Arc::clone(&fs)));
+
+    // Build the shared approval channel + secrets slot up-front so
+    // both the MCP provider (sender side, via `devdev_ask`) and the
+    // dispatch IPC (receiver side, via `approval_response`) can hold
+    // halves.
+    let policy = ApprovalPolicy::AutoApprove;
+    let (gate, handle) = approval_channel(policy, APPROVAL_TIMEOUT);
+    let approval_gate = Arc::new(Mutex::new(gate));
+    let approval_handle = Arc::new(Mutex::new(handle));
+    let agent_secrets = Arc::new(Mutex::new(devdev_daemon::secrets::AgentSecrets::default()));
+
+    // Best-effort `gh auth token` sample — non-fatal if absent.
+    match devdev_daemon::secrets::try_read_gh_token().await {
+        Ok(Some(token)) => {
+            agent_secrets.lock().await.set_gh_token(Some(token));
+            eprintln!("DevDev: gh token sampled (devdev_ask will hand it out on approval)");
+        }
+        Ok(None) => {
+            eprintln!("DevDev: no gh token (run `gh auth login` to enable PR posting)");
+        }
+        Err(e) => eprintln!("DevDev: gh auth token failed: {e}"),
+    }
+
+    let mcp_provider = Arc::new(
+        DaemonToolProvider::new(Arc::clone(&tasks), Arc::clone(&fs))
+            .with_ask(Arc::clone(&approval_gate), Arc::clone(&agent_secrets)),
+    );
     let mcp_server = McpServer::start(mcp_provider)
         .await
         .context("starting local MCP server")?;
@@ -213,10 +299,18 @@ pub async fn run_up(args: UpArgs) -> Result<()> {
     ));
     let router = Arc::new(SessionRouter::new(backend));
     let github = select_github_adapter(args.github.as_deref());
-    let policy = ApprovalPolicy::AutoApprove;
-    let (_gate, handle) = approval_channel(policy, APPROVAL_TIMEOUT);
-    let approval_handle = Arc::new(Mutex::new(handle));
-    let review_fn = placeholder_review_fn();
+    let event_bus = EventBus::new();
+
+    let ledger_path = data_dir.join("ledger.ndjson");
+    let ledger = match NdjsonLedger::open(&ledger_path) {
+        Ok(l) => Arc::new(l) as Arc<dyn devdev_tasks::ledger::IdempotencyLedger>,
+        Err(e) => {
+            return Err(anyhow!(
+                "failed to open ledger at {}: {e}",
+                ledger_path.display()
+            ));
+        }
+    };
 
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
@@ -224,12 +318,43 @@ pub async fn run_up(args: UpArgs) -> Result<()> {
         router,
         tasks,
         github,
+        approval_gate,
         approval_handle,
-        review_fn,
+        event_bus,
+        ledger,
         policy,
+        agent_secrets,
         shutdown_tx.clone(),
         fs,
     ));
+
+    // Background coordinator: any PR event published on the bus
+    // becomes a `MonitorPrTask` (created on first observation).
+    let coordinator = spawn_event_coordinator(Arc::clone(&ctx), shutdown_tx.subscribe());
+
+    // Background task scheduler: tick every 5s and poll every
+    // registered task. Each task's `poll()` should self-throttle
+    // against its own `poll_interval()` if it cares; today the
+    // RepoWatchTask polls on every tick — adequate for dogfood,
+    // but overdue for a per-task timer.
+    let scheduler_ctx = Arc::clone(&ctx);
+    let mut scheduler_shutdown = shutdown_tx.subscribe();
+    let scheduler = tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(Duration::from_secs(5));
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tokio::select! {
+                _ = ticker.tick() => {
+                    scheduler_ctx.poll_all_tasks().await;
+                }
+                changed = scheduler_shutdown.changed() => {
+                    if changed.is_err() || *scheduler_shutdown.borrow() {
+                        break;
+                    }
+                }
+            }
+        }
+    });
 
     let server_task = tokio::spawn(server::run(Arc::clone(&ctx), server, shutdown_rx));
 
@@ -251,6 +376,8 @@ pub async fn run_up(args: UpArgs) -> Result<()> {
 
     // Let the accept loop observe the flag and exit.
     let _ = server_task.await;
+    let _ = coordinator.await;
+    let _ = scheduler.await;
 
     // Stop the MCP server so its port is released before we claim
     // shutdown is done. Shutdown is graceful — no pending requests.
@@ -341,5 +468,230 @@ pub async fn run_status(args: StatusArgs) -> Result<()> {
     let sessions = result.get("sessions").and_then(|v| v.as_u64()).unwrap_or(0);
     println!("tasks={tasks}");
     println!("sessions={sessions}");
+    Ok(())
+}
+
+// ─── repo watch / unwatch ──────────────────────────────────────
+
+fn split_owner_repo(slug: &str) -> Result<(&str, &str)> {
+    slug.split_once('/')
+        .filter(|(o, r)| !o.is_empty() && !r.is_empty() && !r.contains('/'))
+        .ok_or_else(|| anyhow!("expected `owner/repo`, got `{slug}`"))
+}
+
+pub async fn run_repo_watch(args: RepoWatchArgs) -> Result<()> {
+    let (owner, repo) = split_owner_repo(&args.repo)?;
+    let data_dir = resolve_data_dir(args.data_dir);
+    let mut client = connect_ipc(&data_dir).await?;
+    let mut params = serde_json::json!({ "owner": owner, "repo": repo });
+    if let Some(secs) = args.poll_interval_secs {
+        params["poll_interval_secs"] = secs.into();
+    }
+    let resp = client
+        .request("repo/watch", params)
+        .await
+        .context("sending repo/watch IPC request")?;
+    if let Some(err) = resp.error {
+        return Err(anyhow!("repo/watch failed: {}", err.message));
+    }
+    let result = resp.result.unwrap_or_default();
+    let task_id = result["task_id"].as_str().unwrap_or("?");
+    let already = result["already_watching"].as_bool().unwrap_or(false);
+    if already {
+        println!("already watching {owner}/{repo} as {task_id}");
+    } else {
+        println!("watching {owner}/{repo} as {task_id}");
+    }
+    Ok(())
+}
+
+pub async fn run_repo_unwatch(args: RepoUnwatchArgs) -> Result<()> {
+    let (owner, repo) = split_owner_repo(&args.repo)?;
+    let data_dir = resolve_data_dir(args.data_dir);
+    let mut client = connect_ipc(&data_dir).await?;
+    let resp = client
+        .request(
+            "repo/unwatch",
+            serde_json::json!({ "owner": owner, "repo": repo }),
+        )
+        .await
+        .context("sending repo/unwatch IPC request")?;
+    if let Some(err) = resp.error {
+        return Err(anyhow!("repo/unwatch failed: {}", err.message));
+    }
+    println!("unwatched {owner}/{repo}");
+    Ok(())
+}
+
+// ─── init (Vibe Check scribe) ──────────────────────────────────
+
+const VIBE_CHECK_SYSTEM_PROMPT: &str = include_str!("vibe_check_prompt.md");
+/// Cross-platform home-directory lookup. We deliberately avoid the
+/// `dirs` crate to keep `devdev-cli` dependencies lean; the env
+/// variables we read are the same ones `dirs` consults first.
+fn home_dir() -> Option<PathBuf> {
+    if let Ok(h) = std::env::var("HOME")
+        && !h.is_empty()
+    {
+        return Some(PathBuf::from(h));
+    }
+    if let Ok(p) = std::env::var("USERPROFILE")
+        && !p.is_empty()
+    {
+        return Some(PathBuf::from(p));
+    }
+    None
+}
+pub async fn run_init(args: InitArgs) -> Result<()> {
+    let data_dir = resolve_data_dir(args.data_dir);
+    let workdir = args
+        .workdir
+        .clone()
+        .unwrap_or(std::env::current_dir().context("resolving workdir")?);
+
+    let mut client = connect_ipc(&data_dir).await?;
+
+    // Seed the session with the scribe persona + current workdir hint.
+    let preamble = format!(
+        "{VIBE_CHECK_SYSTEM_PROMPT}\n\nWorking directory: {}\n",
+        workdir.display()
+    );
+    eprintln!("DevDev Vibe Check — interviewing you for preferences. Type a blank line to finish.");
+    eprintln!(
+        "(Files will be written under {})\n",
+        workdir.join(".devdev").display()
+    );
+
+    let opening = send_one(
+        &mut client,
+        format!("{preamble}\n\nGreet the user and ask the first question."),
+    )
+    .await?;
+    println!("scribe> {opening}\n");
+
+    if args.one_shot {
+        return Ok(());
+    }
+
+    let stdin = std::io::stdin();
+    loop {
+        eprint!("you> ");
+        use std::io::Write;
+        std::io::stderr().flush().ok();
+        let mut line = String::new();
+        if stdin.read_line(&mut line)? == 0 {
+            break;
+        }
+        let line = line.trim();
+        if line.is_empty() {
+            break;
+        }
+        let reply = send_one(&mut client, line.to_string()).await?;
+        println!("scribe> {reply}\n");
+    }
+
+    eprintln!("\nVibe Check complete. Inspect with `devdev preferences list`.");
+    Ok(())
+}
+
+async fn send_one(client: &mut devdev_daemon::ipc::IpcClient, text: String) -> Result<String> {
+    let resp = client
+        .request("send", serde_json::json!({ "text": text }))
+        .await
+        .context("sending IPC send request")?;
+    if let Some(err) = resp.error {
+        return Err(anyhow!("send failed: {}", err.message));
+    }
+    let result = resp
+        .result
+        .ok_or_else(|| anyhow!("daemon returned neither result nor error"))?;
+    Ok(result
+        .get("response")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string())
+}
+
+// ─── preferences list / edit ───────────────────────────────────
+
+pub fn run_preferences_list(args: PreferencesListArgs) -> Result<()> {
+    let workdir = args
+        .workdir
+        .clone()
+        .unwrap_or(std::env::current_dir().context("resolving workdir")?);
+    let home = if args.no_home { None } else { home_dir() };
+    let files = crate::preferences::discover(&workdir, home.as_deref())
+        .context("discovering preferences")?;
+
+    if args.json {
+        let json: Vec<_> = files
+            .iter()
+            .map(|f| {
+                serde_json::json!({
+                    "path": f.path,
+                    "title": f.title,
+                    "layer": format!("{:?}", f.layer),
+                })
+            })
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&json)?);
+        return Ok(());
+    }
+
+    if files.is_empty() {
+        println!("(no preferences found — run `devdev init` to create some)");
+        return Ok(());
+    }
+    for f in &files {
+        println!("[{:?}] {} — {}", f.layer, f.title, f.path.display());
+    }
+    Ok(())
+}
+
+pub fn run_preferences_edit(args: PreferencesEditArgs) -> Result<()> {
+    let workdir = args
+        .workdir
+        .clone()
+        .unwrap_or(std::env::current_dir().context("resolving workdir")?);
+    let files = crate::preferences::discover(&workdir, home_dir().as_deref())
+        .context("discovering preferences")?;
+    let needle = args.name.to_lowercase();
+    let hit = files.iter().find(|f| {
+        f.title.to_lowercase() == needle
+            || f.path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .map(|s| s.to_lowercase() == needle)
+                .unwrap_or(false)
+    });
+    let target = match hit {
+        Some(f) => f.path.clone(),
+        None => {
+            // Default to a new file under repo-local .devdev/.
+            let safe: String = args
+                .name
+                .chars()
+                .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+                .collect();
+            workdir.join(".devdev").join(format!("{safe}.md"))
+        }
+    };
+    if let Some(p) = target.parent() {
+        std::fs::create_dir_all(p).ok();
+    }
+    let editor = std::env::var("EDITOR").unwrap_or_else(|_| {
+        if cfg!(windows) {
+            "notepad".into()
+        } else {
+            "nano".into()
+        }
+    });
+    let status = std::process::Command::new(&editor)
+        .arg(&target)
+        .status()
+        .with_context(|| format!("launching $EDITOR ({editor})"))?;
+    if !status.success() {
+        return Err(anyhow!("{editor} exited with {}", status));
+    }
     Ok(())
 }

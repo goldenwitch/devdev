@@ -444,7 +444,11 @@ pub struct ToolCall {
     pub tool_call_id: String,
     pub title: String,
     pub kind: ToolCallKind,
-    pub status: ToolCallStatus,
+    /// Optional: Copilot CLI omits this on the initial `tool_call`
+    /// notification (status is implicit `pending`). Subsequent
+    /// `tool_call_update` notifications carry it explicitly.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<ToolCallStatus>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub raw_input: Option<serde_json::Value>,
 }
@@ -453,7 +457,10 @@ pub struct ToolCall {
 #[serde(rename_all = "camelCase")]
 pub struct ToolCallUpdate {
     pub tool_call_id: String,
-    pub status: ToolCallStatus,
+    /// Optional for symmetry with `ToolCall`. A status-less update
+    /// is a metadata-only change (e.g. output appended).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<ToolCallStatus>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output: Option<String>,
 }

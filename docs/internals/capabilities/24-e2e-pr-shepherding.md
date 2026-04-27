@@ -1,7 +1,7 @@
 ---
 id: e2e-pr-shepherding
 title: "E2E PR Shepherding"
-status: not-started
+status: in-progress
 type: composition
 phase: 2
 crate: tests
