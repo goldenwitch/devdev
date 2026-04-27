@@ -332,6 +332,30 @@ pub async fn run_up(args: UpArgs) -> Result<()> {
     // becomes a `MonitorPrTask` (created on first observation).
     let coordinator = spawn_event_coordinator(Arc::clone(&ctx), shutdown_tx.subscribe());
 
+    // Background task scheduler: tick every 5s and poll every
+    // registered task. Each task's `poll()` should self-throttle
+    // against its own `poll_interval()` if it cares; today the
+    // RepoWatchTask polls on every tick — adequate for dogfood,
+    // but overdue for a per-task timer.
+    let scheduler_ctx = Arc::clone(&ctx);
+    let mut scheduler_shutdown = shutdown_tx.subscribe();
+    let scheduler = tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(Duration::from_secs(5));
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tokio::select! {
+                _ = ticker.tick() => {
+                    scheduler_ctx.poll_all_tasks().await;
+                }
+                changed = scheduler_shutdown.changed() => {
+                    if changed.is_err() || *scheduler_shutdown.borrow() {
+                        break;
+                    }
+                }
+            }
+        }
+    });
+
     let server_task = tokio::spawn(server::run(Arc::clone(&ctx), server, shutdown_rx));
 
     eprintln!(
@@ -353,6 +377,7 @@ pub async fn run_up(args: UpArgs) -> Result<()> {
     // Let the accept loop observe the flag and exit.
     let _ = server_task.await;
     let _ = coordinator.await;
+    let _ = scheduler.await;
 
     // Stop the MCP server so its port is released before we claim
     // shutdown is done. Shutdown is graceful — no pending requests.

@@ -18,7 +18,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use devdev_integrations::{GitHubAdapter, pr_state_hash};
 
@@ -37,6 +37,8 @@ pub struct RepoWatchTask {
     /// `pr_number → state_hash` for the most recent poll.
     last_seen: HashMap<u64, String>,
     poll_interval: Duration,
+    /// When `poll()` last actually ran. `None` until the first run.
+    last_polled: Option<Instant>,
     status: TaskStatus,
     github: Arc<dyn GitHubAdapter>,
     ledger: Arc<dyn IdempotencyLedger>,
@@ -58,6 +60,7 @@ impl RepoWatchTask {
             repo: repo.into(),
             last_seen: HashMap::new(),
             poll_interval: Duration::from_secs(60),
+            last_polled: None,
             status: TaskStatus::Created,
             github,
             ledger,
@@ -195,6 +198,14 @@ impl Task for RepoWatchTask {
         if self.status.is_terminal() {
             return Ok(vec![]);
         }
+        // Self-throttle: callers may invoke `poll()` faster than
+        // our `poll_interval`. Skip until we're due.
+        if let Some(prev) = self.last_polled
+            && prev.elapsed() < self.poll_interval
+        {
+            return Ok(vec![]);
+        }
+        self.last_polled = Some(Instant::now());
         self.do_poll().await
     }
 
