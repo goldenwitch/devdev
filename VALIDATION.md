@@ -51,6 +51,11 @@ the DLL delay-load resolves.
 | `AGENT-FS-WRITE` | A live Copilot session's tool calls update the mounted workspace Fs, verified through both the host mount and the Fs directly. | `DEVDEV_LIVE_COPILOT=1` |
 | `DAEMON-AGENT-FS-WRITE` | A `devdev up` daemon routes a live Copilot session through an injected MCP tool to mutate daemon-owned Fs state. | `DEVDEV_LIVE_COPILOT=1` |
 | `FIXTURE-MANIFEST-INTEGRITY` | The CI-resettable live-test fixture manifest enforces its structural invariants and the `reset-comments` keep/delete decisions are correct (deterministic side; the fixture-state-matches-manifest side runs in CI only). | none |
+| `LIVE-HOST-PROBE-GH` | `GitHubAdapter` round-trips the canonical fixture PR through real github.com REST. | `DEVDEV_LIVE_HOSTS=1` + fixture env |
+| `LIVE-HOST-PROBE-ADO` | `AzureDevOpsAdapter` round-trips the canonical fixture PR through real `dev.azure.com` REST. | `DEVDEV_LIVE_HOSTS=1` + fixture env |
+| `LIVE-CREDENTIAL-CHAIN-GH` | `GhCliProvider` produces a non-empty token from a real signed-in `gh` CLI, stamped with `TokenSource::GhCli`. | `DEVDEV_LIVE_CRED_GH=1` |
+| `LIVE-CREDENTIAL-CHAIN-ADO` | `AzCliProvider` produces a non-empty AAD token from a real signed-in `az` CLI for the ADO resource. | `DEVDEV_LIVE_CRED_AZ=1` |
+| `LIVE-ADO-PR-WRITE` | `AzureDevOpsAdapter::post_comment` lands a tagged comment on the canonical PR; `list_pr_comments` sees it. Cleanup removes it. | `DEVDEV_LIVE_HOSTS=1`, `DEVDEV_LIVE_WRITE=1` + fixture env |
 
 ## Live tests in CI
 

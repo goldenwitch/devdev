@@ -110,6 +110,9 @@ jobs:
       - name: cargo test (live, --ignored)
         env:
           DEVDEV_LIVE_GHE: ""  # GHE is intentionally not in CI; see docs/internals/ghe-gap.md
+          DEVDEV_LIVE_HOSTS: "1"
+          DEVDEV_LIVE_CRED_GH: "1"
+          DEVDEV_LIVE_CRED_AZ: ""  # az CLI not seeded in this workflow yet
           DEVDEV_GH_TOKEN: ${{ secrets.DEVDEV_GH_TOKEN }}
           DEVDEV_ADO_TOKEN: ${{ secrets.DEVDEV_ADO_TOKEN }}
           DEVDEV_LIVE_WRITE: ${{ inputs.run_writes && '1' || '' }}

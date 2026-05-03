@@ -69,6 +69,7 @@ portable-pty = "0.9"
 
 # Testing
 tempfile = "3"
+serial_test = "3"
 
 # ---------------------------------------------------------------------------
 # Release packaging (cargo-dist). Linux + Windows x86_64 only; no macOS
