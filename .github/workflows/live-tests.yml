@@ -142,6 +142,18 @@ jobs:
         run: |
           cargo run -p devdev-test-env --quiet -- --skip-ado print-env >> "$GITHUB_ENV"
 
+      - name: seed gh CLI auth (consumer token)
+        # The `live_credential_chain::gh_cli_provider_yields_token`
+        # test exercises `gh auth token` and needs an authenticated
+        # gh CLI. We use a non-`GH_TOKEN` env var name because
+        # `gh auth login --with-token` refuses to run while
+        # `GH_TOKEN` is set in its environment.
+        env:
+          DEVDEV_LIVE_GH_LOGIN_TOKEN: ${{ steps.gh_consumer.outputs.token }}
+        run: |
+          printf '%s' "$DEVDEV_LIVE_GH_LOGIN_TOKEN" | gh auth login --with-token
+          gh auth status
+
       - name: cargo test (live, --ignored)
         env:
           DEVDEV_LIVE_GHE: ""  # GHE is intentionally not in CI; see docs/internals/ghe-gap.md
