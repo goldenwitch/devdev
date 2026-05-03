@@ -183,8 +183,8 @@ mod tests {
     fn sample() -> Manifest {
         Manifest {
             github: GithubFixture {
-                org: "devdev-fixtures".into(),
-                repo: "live-tests".into(),
+                org: "goldenwitch".into(),
+                repo: "devdev-test-environment".into(),
                 default_branch: "main".into(),
                 fixture_branch: "fixture/canonical".into(),
                 canonical_pr: CanonicalPr {
@@ -201,7 +201,7 @@ mod tests {
             azure_devops: AdoFixture {
                 org: "devdev-fixtures".into(),
                 project: "DevDev-Live".into(),
-                repo: "live-tests".into(),
+                repo: "devdev-test-environment".into(),
                 default_branch: "main".into(),
                 fixture_branch: "fixture/canonical".into(),
                 canonical_pr: CanonicalPr {

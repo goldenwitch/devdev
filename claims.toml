@@ -94,7 +94,7 @@ fixture URL parsed by `PrRef`.
 """
 test = "cargo test -p devdev-cli --test live_host_probe -- --ignored github_canonical_pr_round_trips"
 requires_env = ["DEVDEV_LIVE_HOSTS=1", "DEVDEV_GH_TOKEN", "DEVDEV_GH_PR_URL"]
-requires_host = ["live github.com fixture (devdev-fixtures/live-tests)"]
+requires_host = ["live github.com fixture (goldenwitch/devdev-test-environment)"]
 
 [[claim]]
 id = "LIVE-HOST-PROBE-ADO"
@@ -109,7 +109,7 @@ URL parsed by `PrRef` (`RepoHostId::azure_devops()`).
 """
 test = "cargo test -p devdev-cli --test live_host_probe -- --ignored ado_canonical_pr_round_trips"
 requires_env = ["DEVDEV_LIVE_HOSTS=1", "DEVDEV_ADO_TOKEN", "DEVDEV_ADO_PR_URL"]
-requires_host = ["live ADO fixture (devdev-fixtures/DevDev-Live/live-tests)"]
+requires_host = ["live ADO fixture (devdev-fixtures/DevDev-Live/devdev-test-environment)"]
 
 [[claim]]
 id = "LIVE-CREDENTIAL-CHAIN-GH"

@@ -30,8 +30,8 @@ sponsorship invitation live in [`ghe-gap.md`](./ghe-gap.md).
 
 ```
 GitHub.com
-└── org   "devdev-fixtures"
-    └── repo  "live-tests"
+└── account  "goldenwitch"
+    └── repo  "devdev-test-environment"
         ├── branch  main
         ├── branch  fixture/canonical
         └── PR      "Canonical fixture PR — DO NOT MERGE"   (open, against main)
@@ -39,7 +39,7 @@ GitHub.com
 Azure DevOps
 └── org   "devdev-fixtures"
     └── project  "DevDev-Live"
-        └── repo  "live-tests"
+        └── repo  "devdev-test-environment"
             ├── branch  main
             ├── branch  fixture/canonical
             └── PR      "Canonical fixture PR — DO NOT MERGE"   (active)

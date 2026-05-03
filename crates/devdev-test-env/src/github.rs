@@ -20,15 +20,20 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::manifest::{CanonicalPr, GithubFixture, GithubLock};
+use crate::secret::Token;
 
 const API_BASE: &str = "https://api.github.com";
 const UA: &str = "devdev-test-env/0.1";
 
 /// Authenticated client for the GitHub REST API. Each method is
 /// idempotent: it reads first, only writes if state diverges.
+///
+/// SECURITY: deliberately does **not** derive `Debug`. The token is
+/// further wrapped in [`Token`] so even if someone adds Debug later,
+/// the value won't leak through `{:?}`.
 pub struct GithubClient {
     http: Client,
-    token: String,
+    token: Token,
 }
 
 impl GithubClient {
@@ -37,11 +42,14 @@ impl GithubClient {
             .user_agent(UA)
             .timeout(Duration::from_secs(30))
             .build()?;
-        Ok(Self { http, token })
+        Ok(Self {
+            http,
+            token: Token::new(token),
+        })
     }
 
     fn auth(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-        req.header(AUTHORIZATION, format!("Bearer {}", self.token))
+        req.header(AUTHORIZATION, format!("Bearer {}", self.token.expose()))
             .header(ACCEPT, "application/vnd.github+json")
             .header(USER_AGENT, UA)
             .header("X-GitHub-Api-Version", "2022-11-28")

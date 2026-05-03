@@ -25,5 +25,7 @@ pub mod ado;
 pub mod github;
 pub mod manifest;
 pub mod reset;
+pub mod secret;
 
 pub use manifest::{AdoFixture, GithubFixture, Manifest, ManifestLock};
+pub use secret::Token;

@@ -20,13 +20,20 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::manifest::{AdoFixture, AdoLock, CanonicalPr};
+use crate::secret::Token;
 
 const API_VERSION: &str = "7.1";
 const UA: &str = "devdev-test-env/0.1";
 
+/// Authenticated client for the Azure DevOps REST API.
+///
+/// SECURITY: deliberately does **not** derive `Debug`. The pre-built
+/// `Authorization: Basic ...` header is wrapped in [`Token`] so that
+/// even if someone adds Debug later, the value won't leak through
+/// `{:?}`.
 pub struct AdoClient {
     http: Client,
-    basic: String,
+    auth_header: Token,
 }
 
 impl AdoClient {
@@ -36,11 +43,14 @@ impl AdoClient {
             .user_agent(UA)
             .timeout(Duration::from_secs(30))
             .build()?;
-        Ok(Self { http, basic })
+        Ok(Self {
+            http,
+            auth_header: Token::new(basic),
+        })
     }
 
     fn auth(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-        req.header(AUTHORIZATION, &self.basic)
+        req.header(AUTHORIZATION, self.auth_header.expose())
             .header(ACCEPT, "application/json")
             .header(USER_AGENT, UA)
     }

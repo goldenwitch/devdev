@@ -1,7 +1,7 @@
 {
   "github": {
-    "org": "devdev-fixtures",
-    "repo": "live-tests",
+    "org": "goldenwitch",
+    "repo": "devdev-test-environment",
     "default_branch": "main",
     "fixture_branch": "fixture/canonical",
     "canonical_pr": {
@@ -20,7 +20,7 @@
   "azure_devops": {
     "org": "devdev-fixtures",
     "project": "DevDev-Live",
-    "repo": "live-tests",
+    "repo": "devdev-test-environment",
     "default_branch": "main",
     "fixture_branch": "fixture/canonical",
     "canonical_pr": {
