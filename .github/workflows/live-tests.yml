@@ -1,0 +1,144 @@
+# Live tests against real GitHub.com + Azure DevOps fixtures.
+#
+# Triggers:
+#   - workflow_dispatch (manual): preferred entry-point for now.
+#   - schedule (nightly cron): catches drift overnight.
+#   - pull_request_target with the `live-tests` label: opt-in;
+#     `pull_request_target` is used so the workflow file from the
+#     base branch (this commit) is the one that runs, NOT a fork's
+#     proposed edit. CODEOWNERS must protect this file.
+#
+# Secret model:
+#   - Admin tokens (`GITHUB_TOKEN_ADMIN`, `ADO_PAT_ADMIN`) are
+#     visible only to the `provision` and `cleanup` jobs.
+#   - Lower-privilege consumer tokens (`DEVDEV_GH_TOKEN`,
+#     `DEVDEV_ADO_TOKEN`) plus `DEVDEV_COPILOT_GH_TOKEN` are
+#     visible only to the `live-tests` job. No admin ever leaks
+#     into test code.
+#
+# State flow:
+#   provision → uploads `manifest.lock.json` artifact
+#   live-tests → downloads it, exports env via `print-env`
+#   cleanup    → downloads it, runs `reset-comments` (always)
+
+name: live-tests
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_writes:
+        description: "Set DEVDEV_LIVE_WRITE=1 (allows comment-posting tests)"
+        type: boolean
+        default: false
+  schedule:
+    # 06:13 UTC nightly — non-round to avoid GH Actions cron stampede.
+    - cron: "13 6 * * *"
+  pull_request_target:
+    types: [labeled]
+
+permissions: {}
+
+# Single-flight: never two of these in parallel against the same fixtures.
+concurrency:
+  group: live-tests
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-Dwarnings"
+
+jobs:
+  gate:
+    # Skip pull_request_target events that aren't carrying our label.
+    if: >
+      github.event_name != 'pull_request_target' ||
+      github.event.label.name == 'live-tests'
+    runs-on: ubuntu-latest
+    steps:
+      - run: 'echo "ok"'
+
+  provision:
+    needs: gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: live-tests-admin
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo build -p devdev-test-env
+        run: cargo build -p devdev-test-env --locked --release
+      - name: apply
+        env:
+          GITHUB_TOKEN_ADMIN: ${{ secrets.GITHUB_TOKEN_ADMIN }}
+          ADO_PAT_ADMIN: ${{ secrets.ADO_PAT_ADMIN }}
+        run: |
+          ./target/release/devdev-test-env apply
+      - name: upload manifest.lock.json
+        uses: actions/upload-artifact@v4
+        with:
+          name: manifest-lock
+          path: test-env/manifest.lock.json
+          if-no-files-found: error
+          retention-days: 7
+
+  live-tests:
+    needs: provision
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: live-tests-consumer
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup show active-toolchain || rustup toolchain install
+      - name: Install FUSE
+        run: sudo apt-get update && sudo apt-get install -y fuse3 libfuse3-dev pkg-config
+      - uses: Swatinem/rust-cache@v2
+      - name: download manifest lock
+        uses: actions/download-artifact@v4
+        with:
+          name: manifest-lock
+          path: test-env/
+      - name: export env from manifest
+        run: |
+          cargo run -p devdev-test-env --quiet -- print-env >> "$GITHUB_ENV"
+      - name: seed gh CLI auth
+        env:
+          GH_TOKEN: ${{ secrets.DEVDEV_COPILOT_GH_TOKEN }}
+        run: |
+          echo "$GH_TOKEN" | gh auth login --with-token
+          gh auth status
+      - name: cargo test (live, --ignored)
+        env:
+          DEVDEV_LIVE_GHE: ""  # GHE is intentionally not in CI; see docs/internals/ghe-gap.md
+          DEVDEV_GH_TOKEN: ${{ secrets.DEVDEV_GH_TOKEN }}
+          DEVDEV_ADO_TOKEN: ${{ secrets.DEVDEV_ADO_TOKEN }}
+          DEVDEV_LIVE_WRITE: ${{ inputs.run_writes && '1' || '' }}
+        run: |
+          cargo test --workspace --locked --tests \
+            -- --ignored --skip live_workspace_cwd
+
+  cleanup:
+    needs: live-tests
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: live-tests-admin
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - name: download manifest lock
+        uses: actions/download-artifact@v4
+        with:
+          name: manifest-lock
+          path: test-env/
+      - name: reset-comments
+        env:
+          GITHUB_TOKEN_ADMIN: ${{ secrets.GITHUB_TOKEN_ADMIN }}
+          ADO_PAT_ADMIN: ${{ secrets.ADO_PAT_ADMIN }}
+          DEVDEV_TEST_ENV_GITHUB_ADMIN_LOGIN: ${{ vars.DEVDEV_TEST_ENV_GITHUB_ADMIN_LOGIN }}
+          DEVDEV_TEST_ENV_ADO_ADMIN_NAME: ${{ vars.DEVDEV_TEST_ENV_ADO_ADMIN_NAME }}
+        run: |
+          cargo run -p devdev-test-env --quiet -- reset-comments \
+            --admin-github-login "$DEVDEV_TEST_ENV_GITHUB_ADMIN_LOGIN" \
+            --admin-ado-name "$DEVDEV_TEST_ENV_ADO_ADMIN_NAME"

@@ -1,0 +1,34 @@
+{
+  "github": {
+    "org": "devdev-fixtures",
+    "repo": "live-tests",
+    "default_branch": "main",
+    "fixture_branch": "fixture/canonical",
+    "canonical_pr": {
+      "title": "Canonical fixture PR — DO NOT MERGE",
+      "body": "Provisioned by `devdev-test-env`. This PR is the canonical target for DevDev's live tests. Do not merge, rename, or close. Stray comments left here will be swept by the post-test cleanup hook.\n\nIf you arrived here by accident: see `docs/internals/live-test-fixtures.md`.",
+      "base": "main",
+      "fixture_files": [
+        {
+          "path": "FIXTURE.md",
+          "contents": "# DevDev fixture branch\n\nThis branch is owned by `devdev-test-env`. The contents of every file under this branch are reset to manifest values on each `apply`. Do not commit anything here you want to keep.\n"
+        }
+      ]
+    },
+    "comment_tag_prefix": "[devdev-live-test]"
+  },
+  "azure_devops": {
+    "org": "devdev-fixtures",
+    "project": "DevDev-Live",
+    "repo": "live-tests",
+    "default_branch": "main",
+    "fixture_branch": "fixture/canonical",
+    "canonical_pr": {
+      "title": "Canonical fixture PR — DO NOT MERGE",
+      "body": "Provisioned by `devdev-test-env`. See `docs/internals/live-test-fixtures.md`.",
+      "base": "main",
+      "fixture_files": []
+    },
+    "comment_tag_prefix": "[devdev-live-test]"
+  }
+}

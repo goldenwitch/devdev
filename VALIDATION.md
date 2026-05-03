@@ -49,6 +49,18 @@ the DLL delay-load resolves.
 | id | what it proves | gate |
 |---|---|---|
 | `AGENT-FS-WRITE` | A live Copilot session's tool calls update the mounted workspace Fs, verified through both the host mount and the Fs directly. | `DEVDEV_LIVE_COPILOT=1` |
+| `DAEMON-AGENT-FS-WRITE` | A `devdev up` daemon routes a live Copilot session through an injected MCP tool to mutate daemon-owned Fs state. | `DEVDEV_LIVE_COPILOT=1` |
+| `FIXTURE-MANIFEST-INTEGRITY` | The CI-resettable live-test fixture manifest enforces its structural invariants and the `reset-comments` keep/delete decisions are correct (deterministic side; the fixture-state-matches-manifest side runs in CI only). | none |
+
+## Live tests in CI
+
+The four-stage live-tests pipeline lives in
+[`.github/workflows/live-tests.yml`](.github/workflows/live-tests.yml).
+Manual `workflow_dispatch` + nightly cron + label-gated PRs. The
+fixture environment it provisions is documented in
+[`docs/internals/live-test-fixtures.md`](docs/internals/live-test-fixtures.md);
+the deliberate GHE gap and how to close it is documented in
+[`docs/internals/ghe-gap.md`](docs/internals/ghe-gap.md).
 
 The list is deliberately short. Adding a claim means writing a real
 test that clears the rubric — not padding the manifest.

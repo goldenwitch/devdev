@@ -56,3 +56,27 @@ Scope of this claim:
 test = "cargo test -p devdev-cli --test live_daemon_fs_write -- --ignored devdev_up_agent_fs_write_lands_in_daemon_fs"
 requires_env = ["DEVDEV_LIVE_COPILOT=1"]
 requires_host = ["copilot on PATH, signed in"]
+
+[[claim]]
+id = "FIXTURE-MANIFEST-INTEGRITY"
+source = "docs/internals/live-test-fixtures.md"
+line = 1
+text = """
+The live-test fixture environment is defined declaratively in
+`test-env/manifest.json`. The manifest's structural invariants
+(non-empty org/project/repo, bracketed comment-tag prefix,
+canonical PR base equals default branch, no unknown fields) are
+enforced by `devdev_test_env::manifest::Manifest::validate`,
+and the comment-keep/delete decisions made by
+`reset-comments` are pure functions (admin-login case-folded;
+non-admin comments always swept; admin-tagged comments swept;
+admin-untagged canonical notes preserved).
+
+This is the deterministic side of the live-test claim. The
+fixture-state-matches-manifest side is a CI-only claim
+(`cargo run -p devdev-test-env -- verify`) that requires admin
+tokens and is therefore not in this manifest.
+"""
+test = "cargo test -p devdev-test-env --lib"
+requires_env = []
+requires_host = []

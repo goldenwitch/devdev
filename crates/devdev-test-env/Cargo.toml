@@ -1,0 +1,38 @@
+[package]
+name = "devdev-test-env"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+description = """
+Provisions and resets the live-test environment fixtures (a github.com
+org/repo/canonical PR and an Azure DevOps org/project/repo/canonical PR).
+The `devdev-test-env` binary is intended to run from the live-tests CI
+workflow with admin credentials it stages for the lower-privilege test
+binaries to consume via env vars.
+"""
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "devdev-test-env"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+base64.workspace = true
+clap = { workspace = true, features = ["env"] }
+reqwest = { workspace = true, features = ["rustls-tls"] }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
