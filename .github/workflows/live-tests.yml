@@ -1,0 +1,204 @@
+# Live tests against real GitHub.com (and Azure DevOps once configured).
+#
+# Triggers:
+#   - workflow_dispatch (manual): preferred entry-point.
+#   - schedule (nightly cron): catches drift overnight.
+#   - pull_request_target with the `live-tests` label: opt-in;
+#     `pull_request_target` is used so the workflow file from the
+#     base branch (this commit) is the one that runs, NOT a fork's
+#     proposed edit. CODEOWNERS must protect this file.
+#
+# Auth model:
+#   GitHub: two GitHub Apps (`devdev-fixtures-admin`,
+#     `devdev-fixtures-consumer`). Installation tokens are minted at
+#     job start with `actions/create-github-app-token@v1` from
+#     environment-scoped variables (App ID, Client ID) and
+#     environment-scoped secrets (PEM private key). Tokens auto-expire
+#     in ~1h; nothing long-lived lives in repo secrets.
+#   ADO: planned to use Entra federated credentials via `azure/login@v2`
+#     with environment-scoped client IDs. Currently env-gated; if
+#     `vars.DEVDEV_LIVE_ADO_ENABLED` is not "1", ADO portions skip.
+#
+# Environment split:
+#   live-tests-admin    — admin App. Used by `provision` + `cleanup`.
+#                         Required reviewers should be set on this env.
+#   live-tests-consumer — consumer App. Used by `live-tests`.
+#
+# State flow:
+#   provision → uploads `manifest.lock.json` artifact
+#   live-tests → downloads it, exports env via `print-env`
+#   cleanup    → downloads it, runs `reset-comments` (always)
+
+name: live-tests
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_writes:
+        description: "Set DEVDEV_LIVE_WRITE=1 (allows comment-posting tests)"
+        type: boolean
+        default: false
+  schedule:
+    # 06:13 UTC nightly — non-round to avoid GH Actions cron stampede.
+    - cron: "13 6 * * *"
+  pull_request_target:
+    types: [labeled]
+
+# Top-level: deny everything by default. Per-job permissions are minimal.
+permissions: {}
+
+# Single-flight: never two of these in parallel against the same fixtures.
+concurrency:
+  group: live-tests
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-Dwarnings"
+
+jobs:
+  gate:
+    # Skip pull_request_target events that aren't carrying our label.
+    if: >
+      github.event_name != 'pull_request_target' ||
+      github.event.label.name == 'live-tests'
+    runs-on: ubuntu-latest
+    steps:
+      - run: 'echo "ok"'
+
+  provision:
+    needs: gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: live-tests-admin
+    permissions: {}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: mint admin GH App installation token
+        id: gh_admin
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.DEVDEV_GH_APP_ADMIN_ID }}
+          private-key: ${{ secrets.DEVDEV_GH_APP_ADMIN_PEM }}
+          owner: ${{ vars.DEVDEV_GH_FIXTURE_OWNER }}
+          repositories: ${{ vars.DEVDEV_GH_FIXTURE_REPO }}
+
+      - run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+
+      - name: cargo build -p devdev-test-env
+        run: cargo build -p devdev-test-env --locked --release
+
+      - name: apply (github only; ado gated)
+        env:
+          GITHUB_TOKEN_ADMIN: ${{ steps.gh_admin.outputs.token }}
+          DEVDEV_LIVE_ADO_ENABLED: ${{ vars.DEVDEV_LIVE_ADO_ENABLED }}
+        run: |
+          if [ "$DEVDEV_LIVE_ADO_ENABLED" = "1" ]; then
+            echo "::error::ADO path not yet wired into provision; failing fast"
+            exit 1
+          fi
+          ./target/release/devdev-test-env --skip-ado apply
+
+      - name: upload manifest.lock.json
+        uses: actions/upload-artifact@v4
+        with:
+          name: manifest-lock
+          path: test-env/manifest.lock.json
+          if-no-files-found: error
+          retention-days: 7
+
+  live-tests:
+    needs: provision
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: live-tests-consumer
+    permissions: {}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: mint consumer GH App installation token
+        id: gh_consumer
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.DEVDEV_GH_APP_CONSUMER_ID }}
+          private-key: ${{ secrets.DEVDEV_GH_APP_CONSUMER_PEM }}
+          owner: ${{ vars.DEVDEV_GH_FIXTURE_OWNER }}
+          repositories: ${{ vars.DEVDEV_GH_FIXTURE_REPO }}
+
+      - run: rustup show active-toolchain || rustup toolchain install
+      - name: Install FUSE
+        run: sudo apt-get update && sudo apt-get install -y fuse3 libfuse3-dev pkg-config
+      - uses: Swatinem/rust-cache@v2
+
+      - name: download manifest lock
+        uses: actions/download-artifact@v4
+        with:
+          name: manifest-lock
+          path: test-env/
+
+      - name: export env from manifest
+        run: |
+          cargo run -p devdev-test-env --quiet -- --skip-ado print-env >> "$GITHUB_ENV"
+
+      - name: seed gh CLI auth (consumer token)
+        env:
+          GH_TOKEN: ${{ steps.gh_consumer.outputs.token }}
+        run: |
+          # Ensure the token never echoes (set -x off; redirect via stdin only).
+          printf '%s' "$GH_TOKEN" | gh auth login --with-token
+          gh auth status
+
+      - name: cargo test (live, --ignored)
+        env:
+          DEVDEV_LIVE_GHE: ""  # GHE is intentionally not in CI; see docs/internals/ghe-gap.md
+          DEVDEV_LIVE_HOSTS: "1"
+          DEVDEV_LIVE_CRED_GH: "1"
+          DEVDEV_LIVE_CRED_AZ: ""  # az CLI not seeded; ADO path deferred
+          DEVDEV_GH_TOKEN: ${{ steps.gh_consumer.outputs.token }}
+          DEVDEV_ADO_TOKEN: ""
+          DEVDEV_LIVE_WRITE: ${{ inputs.run_writes && '1' || '' }}
+        run: |
+          cargo test --workspace --locked --tests \
+            -- --ignored --skip live_workspace_cwd
+
+  cleanup:
+    needs: live-tests
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: live-tests-admin
+    permissions: {}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: mint admin GH App installation token
+        id: gh_admin
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.DEVDEV_GH_APP_ADMIN_ID }}
+          private-key: ${{ secrets.DEVDEV_GH_APP_ADMIN_PEM }}
+          owner: ${{ vars.DEVDEV_GH_FIXTURE_OWNER }}
+          repositories: ${{ vars.DEVDEV_GH_FIXTURE_REPO }}
+
+      - run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+
+      - name: download manifest lock
+        uses: actions/download-artifact@v4
+        with:
+          name: manifest-lock
+          path: test-env/
+
+      - name: reset-comments
+        env:
+          GITHUB_TOKEN_ADMIN: ${{ steps.gh_admin.outputs.token }}
+          # The admin GitHub App's bot login is "<app-slug>[bot]".
+          # We hard-code the slug rather than read from a var because
+          # it's structural, not a secret.
+          DEVDEV_TEST_ENV_GITHUB_ADMIN_LOGIN: "devdev-fixtures-admin[bot]"
+        run: |
+          cargo run -p devdev-test-env --quiet -- --skip-ado reset-comments \
+            --admin-github-login "$DEVDEV_TEST_ENV_GITHUB_ADMIN_LOGIN" \
+            --admin-ado-name "n/a"
