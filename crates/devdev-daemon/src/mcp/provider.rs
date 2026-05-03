@@ -126,10 +126,23 @@ impl McpToolProvider for DaemonToolProvider {
                     AskKind::PostReview | AskKind::PostComment | AskKind::RequestToken
                 );
                 let (token, expires_at) = if needs_token {
-                    // Phase 4: surface the github.com credential by
-                    // default. Phase 5 extends `AskRequest` with a
-                    // `host` selector and routes through the registry.
-                    match credentials.get(&RepoHostId::github_com()) {
+                    // Resolve the target host: explicit `host` field
+                    // wins, otherwise default to github.com so old
+                    // clients keep working. Unknown hosts surface as
+                    // a hard rejection \u2014 silently swapping in the
+                    // wrong token would be a security footgun.
+                    let host_id = match req.host.as_deref() {
+                        Some(h) => match RepoHostId::from_browse_host(h) {
+                            Some(id) => id,
+                            None => {
+                                return Ok(AskResponse::Rejected {
+                                    reason: format!("unknown ask host: {h}"),
+                                });
+                            }
+                        },
+                        None => RepoHostId::github_com(),
+                    };
+                    match credentials.get(&host_id) {
                         Some(c) => (
                             Some(c.token().expose().to_string()),
                             c.expires_at_hint(),
@@ -284,6 +297,7 @@ mod tests {
                 kind: AskKind::PostReview,
                 summary: "post review on PR #42".into(),
                 payload: serde_json::json!({ "comment": "looks good" }),
+            host: None,
             })
             .await
             .expect("ask succeeds");
@@ -313,6 +327,7 @@ mod tests {
                 kind: AskKind::Question,
                 summary: "what color?".into(),
                 payload: serde_json::json!({}),
+            host: None,
             })
             .await
             .unwrap();
@@ -335,6 +350,7 @@ mod tests {
             kind: AskKind::PostReview,
             summary: "x".into(),
             payload: serde_json::json!({}),
+            host: None,
         };
         let provider_clone = provider.clone();
         let ask_task = tokio::spawn(async move { provider_clone.ask(req).await });
@@ -366,6 +382,7 @@ mod tests {
                 kind: AskKind::Question,
                 summary: "stalls".into(),
                 payload: serde_json::json!({}),
+            host: None,
             })
             .await
             .unwrap();
@@ -381,6 +398,7 @@ mod tests {
                 kind: AskKind::PostComment,
                 summary: "drop".into(),
                 payload: serde_json::json!({"comment": "x"}),
+            host: None,
             })
             .await
             .unwrap();
@@ -404,9 +422,75 @@ mod tests {
                 kind: AskKind::Question,
                 summary: "nope".into(),
                 payload: serde_json::json!({}),
+            host: None,
             })
             .await
             .expect_err("must error");
         assert!(format!("{err}").contains("not configured"));
+    }
+
+    #[tokio::test]
+    async fn ask_routes_token_by_host_selector() {
+        // Two host entries in the credential store; the ask's
+        // `host` field picks which token comes back.
+        let (gate, _handle) =
+            approval_channel(ApprovalPolicy::AutoApprove, Duration::from_secs(1));
+        let store = Arc::new(CredentialStore::with_entries([
+            crate::credentials::Credential::new(
+                RepoHostId::github_com(),
+                "ghp_main",
+                crate::credentials::TokenSource::Injected,
+            ),
+            crate::credentials::Credential::new(
+                RepoHostId::ghe("ghe.acme.io"),
+                "ghe_secret",
+                crate::credentials::TokenSource::Injected,
+            ),
+        ]));
+        let provider = DaemonToolProvider::new(
+            Arc::new(Mutex::new(TaskRegistry::new())),
+            Arc::new(Mutex::new(devdev_workspace::Fs::new())),
+        )
+        .with_ask(Arc::new(Mutex::new(gate)), store);
+
+        let resp = provider
+            .ask(AskRequest {
+                kind: AskKind::PostReview,
+                summary: "ghe review".into(),
+                payload: serde_json::json!({}),
+                host: Some("ghe.acme.io".into()),
+            })
+            .await
+            .unwrap();
+        match resp {
+            AskResponse::Approved { token, .. } => {
+                assert_eq!(token.as_deref(), Some("ghe_secret"));
+            }
+            other => panic!("expected approved, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn ask_unknown_host_is_rejected() {
+        let (provider, _h, _s) = build_provider_with_ask(
+            ApprovalPolicy::AutoApprove,
+            Duration::from_secs(1),
+            Some("ghp_main"),
+        );
+        let resp = provider
+            .ask(AskRequest {
+                kind: AskKind::PostReview,
+                summary: "bogus".into(),
+                payload: serde_json::json!({}),
+                host: Some("gitlab.example.com".into()),
+            })
+            .await
+            .unwrap();
+        match resp {
+            AskResponse::Rejected { reason } => {
+                assert!(reason.contains("unknown ask host"), "reason was {reason}");
+            }
+            other => panic!("expected rejected, got {other:?}"),
+        }
     }
 }

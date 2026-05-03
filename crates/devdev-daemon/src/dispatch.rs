@@ -20,6 +20,7 @@ use devdev_tasks::repo_watch::RepoWatchTask;
 use devdev_workspace::Fs;
 
 use crate::credentials::CredentialStore;
+use crate::host_registry::RepoHostRegistry;
 use crate::ipc::{IpcRequest, IpcResponse};
 use crate::router::{SessionHandle, SessionRouter};
 use crate::runner::RouterRunner;
@@ -28,7 +29,15 @@ use crate::runner::RouterRunner;
 pub struct DispatchContext {
     pub router: Arc<SessionRouter>,
     pub tasks: Arc<Mutex<TaskRegistry>>,
+    /// Default repo-host adapter used when the registry has no
+    /// entry for a given host id (typically GitHub.com). Kept as a
+    /// distinct field so legacy single-host code paths keep working
+    /// while multi-host preferences are still being plumbed.
     pub github: Arc<dyn RepoHostAdapter>,
+    /// Multi-host adapter registry. `for_host(&host_id)` returns
+    /// the adapter for a specific host; falls through to `github`
+    /// when the host is unregistered.
+    pub host_registry: Arc<RepoHostRegistry>,
     /// Sender side of the approval channel, used by `devdev_ask` to
     /// request user approval before the agent takes external action.
     pub approval_gate: Arc<Mutex<ApprovalGate>>,
@@ -62,6 +71,7 @@ impl DispatchContext {
         router: Arc<SessionRouter>,
         tasks: Arc<Mutex<TaskRegistry>>,
         github: Arc<dyn RepoHostAdapter>,
+        host_registry: Arc<RepoHostRegistry>,
         approval_gate: Arc<Mutex<ApprovalGate>>,
         approval_handle: Arc<Mutex<ApprovalHandle>>,
         event_bus: EventBus,
@@ -75,6 +85,7 @@ impl DispatchContext {
             router,
             tasks,
             github,
+            host_registry,
             approval_gate,
             approval_handle,
             event_bus,
@@ -89,6 +100,17 @@ impl DispatchContext {
             repo_watch_ids: Mutex::new(HashMap::new()),
             monitor_pr_ids: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Resolve the adapter for a host id, falling back to the
+    /// default `github` adapter when the registry has no entry.
+    /// Used by handlers to honour multi-host configuration without
+    /// breaking the legacy single-host smoke flow.
+    fn adapter_for(&self, host_id: &RepoHostId) -> Arc<dyn RepoHostAdapter> {
+        self.host_registry
+            .for_host(host_id)
+            .cloned()
+            .unwrap_or_else(|| Arc::clone(&self.github))
     }
 
     /// Set a custom approval timeout (useful for tests). Rebuilds the
@@ -222,10 +244,21 @@ impl DispatchContext {
         let runner = Arc::new(RouterRunner::new(Arc::clone(&self.router), task_id.clone()))
             as Arc<dyn devdev_tasks::agent::AgentRunner>;
 
+        // Pre-parse so we can route the adapter lookup by host_id
+        // before constructing the task. Mismatch between the
+        // text-extracted host and the registered set is a hard
+        // error — better to fail fast than to silently shadow a
+        // GHE PR with the github.com adapter.
+        let parsed = match devdev_tasks::pr_ref::PrRef::parse(&pr_ref_str) {
+            Ok(p) => p,
+            Err(e) => return IpcResponse::err(req.id, -32602, format!("invalid PR ref: {e}")),
+        };
+        let adapter = self.adapter_for(&parsed.host_id);
+
         match MonitorPrTask::new(
             task_id.clone(),
             &pr_ref_str,
-            Arc::clone(&self.github),
+            adapter,
             runner,
             &self.event_bus,
         ) {
@@ -297,7 +330,7 @@ impl DispatchContext {
             host_id.clone(),
             owner.clone(),
             repo.clone(),
-            Arc::clone(&self.github),
+            self.adapter_for(&host_id),
             Arc::clone(&self.ledger),
             self.event_bus.clone(),
         )
@@ -396,7 +429,7 @@ impl DispatchContext {
         let task = MonitorPrTask::new(
             task_id.clone(),
             &pr_ref_str,
-            Arc::clone(&self.github),
+            self.adapter_for(host_id),
             runner,
             &self.event_bus,
         )

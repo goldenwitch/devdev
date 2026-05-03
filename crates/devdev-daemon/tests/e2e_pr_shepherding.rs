@@ -145,6 +145,10 @@ impl E2EHarness {
         let gh = Arc::new(test_github("sha-initial-001"));
         let github: Arc<dyn devdev_integrations::RepoHostAdapter> =
             Arc::clone(&gh) as Arc<dyn devdev_integrations::RepoHostAdapter>;
+        let host_registry = Arc::new(devdev_daemon::host_registry::RepoHostRegistry::single(
+            devdev_integrations::host::RepoHostId::github_com(),
+            Arc::clone(&github),
+        ));
 
         let backend = Arc::new(FakeAgentBackend::new());
         let backend_dyn: Arc<dyn SessionBackend> = backend.clone();
@@ -169,6 +173,7 @@ impl E2EHarness {
                 Arc::clone(&router),
                 Arc::clone(&registry),
                 github,
+                host_registry,
                 approval_gate,
                 approval_handle,
                 bus.clone(),

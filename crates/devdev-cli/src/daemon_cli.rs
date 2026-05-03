@@ -328,6 +328,17 @@ pub async fn run_up(args: UpArgs) -> Result<()> {
     ));
     let router = Arc::new(SessionRouter::new(backend));
     let github = select_github_adapter(args.github.as_deref());
+    // Multi-host registry. Today we only seed the github.com slot
+    // from the default adapter; preferences-driven population (one
+    // entry per `[[repo]]` block) lands as a follow-up.
+    let host_registry = {
+        use devdev_daemon::host_registry::RepoHostRegistry;
+        use devdev_integrations::host::RepoHostId;
+        Arc::new(RepoHostRegistry::single(
+            RepoHostId::github_com(),
+            Arc::clone(&github),
+        ))
+    };
     let event_bus = EventBus::new();
 
     let ledger_path = data_dir.join("ledger.ndjson");
@@ -347,6 +358,7 @@ pub async fn run_up(args: UpArgs) -> Result<()> {
         router,
         tasks,
         github,
+        host_registry,
         approval_gate,
         approval_handle,
         event_bus,

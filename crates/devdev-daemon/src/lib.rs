@@ -7,6 +7,7 @@
 pub mod checkpoint;
 pub mod credentials;
 pub mod dispatch;
+pub mod host_registry;
 pub mod ipc;
 pub mod ledger;
 pub mod mcp;
