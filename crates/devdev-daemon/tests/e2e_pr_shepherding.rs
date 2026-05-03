@@ -156,7 +156,7 @@ impl E2EHarness {
         let (gate, handle) = approval::approval_channel(policy, Duration::from_secs(30));
         let approval_gate = Arc::new(Mutex::new(gate));
         let approval_handle = Arc::new(Mutex::new(handle));
-        let agent_secrets = Arc::new(Mutex::new(devdev_daemon::secrets::AgentSecrets::default()));
+        let credentials = Arc::new(devdev_daemon::credentials::CredentialStore::empty());
 
         let bus = EventBus::new();
         let ledger: Arc<dyn IdempotencyLedger> =
@@ -174,7 +174,7 @@ impl E2EHarness {
                 bus.clone(),
                 ledger,
                 policy,
-                agent_secrets,
+                credentials,
                 shutdown_tx.clone(),
                 Arc::new(Mutex::new(devdev_workspace::Fs::new())),
             )

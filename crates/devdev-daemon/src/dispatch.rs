@@ -18,10 +18,10 @@ use devdev_tasks::registry::TaskRegistry;
 use devdev_tasks::repo_watch::RepoWatchTask;
 use devdev_workspace::Fs;
 
+use crate::credentials::CredentialStore;
 use crate::ipc::{IpcRequest, IpcResponse};
 use crate::router::{SessionHandle, SessionRouter};
 use crate::runner::RouterRunner;
-use crate::secrets::AgentSecrets;
 
 /// Shared state for the dispatch layer.
 pub struct DispatchContext {
@@ -38,9 +38,10 @@ pub struct DispatchContext {
     pub ledger: Arc<dyn IdempotencyLedger>,
     pub approval_policy: ApprovalPolicy,
     pub approval_timeout: Duration,
-    /// Host-derived secrets (e.g. `gh auth token`) handed out only on
-    /// approved `devdev_ask` calls.
-    pub agent_secrets: Arc<Mutex<AgentSecrets>>,
+    /// Frozen credential snapshot, sampled once at `devdev up`.
+    /// Tokens are surfaced to the agent only via approved
+    /// `devdev_ask` calls.
+    pub credentials: Arc<CredentialStore>,
     pub shutdown_tx: watch::Sender<bool>,
     /// Workspace filesystem, shared with the MCP provider so `fs/read`
     /// IPC calls observe the same bytes the agent wrote via MCP tools.
@@ -65,7 +66,7 @@ impl DispatchContext {
         event_bus: EventBus,
         ledger: Arc<dyn IdempotencyLedger>,
         approval_policy: ApprovalPolicy,
-        agent_secrets: Arc<Mutex<AgentSecrets>>,
+        credentials: Arc<CredentialStore>,
         shutdown_tx: watch::Sender<bool>,
         fs: Arc<Mutex<Fs>>,
     ) -> Self {
@@ -79,7 +80,7 @@ impl DispatchContext {
             ledger,
             approval_policy,
             approval_timeout: Duration::from_secs(300),
-            agent_secrets,
+            credentials,
             shutdown_tx,
             fs,
             interactive: Mutex::new(None),

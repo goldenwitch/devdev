@@ -8,13 +8,14 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use devdev_integrations::host::RepoHostId;
 use devdev_tasks::approval::{ApprovalError, ApprovalGate};
 use devdev_tasks::registry::TaskRegistry;
 use devdev_workspace::Fs;
 use tokio::sync::Mutex;
 
+use crate::credentials::CredentialStore;
 use crate::mcp::{AskKind, AskRequest, AskResponse, McpProviderError, McpToolProvider, TaskInfo};
-use crate::secrets::AgentSecrets;
 
 /// Wraps the daemon's shared `Arc<Mutex<TaskRegistry>>` and
 /// `Arc<Mutex<Fs>>` so the MCP server can both surface task state and
@@ -28,7 +29,7 @@ pub struct DaemonToolProvider {
     tasks: Arc<Mutex<TaskRegistry>>,
     fs: Arc<Mutex<Fs>>,
     approval_gate: Option<Arc<Mutex<ApprovalGate>>>,
-    agent_secrets: Option<Arc<Mutex<AgentSecrets>>>,
+    credentials: Option<Arc<CredentialStore>>,
 }
 
 impl DaemonToolProvider {
@@ -37,20 +38,20 @@ impl DaemonToolProvider {
             tasks,
             fs,
             approval_gate: None,
-            agent_secrets: None,
+            credentials: None,
         }
     }
 
-    /// Wire the approval gate + secrets slot so `devdev_ask` is live.
-    /// Constructed without these, the tool returns a `not configured`
-    /// error — keeping pre-Phase-C tests unaffected.
+    /// Wire the approval gate + credential snapshot so `devdev_ask`
+    /// is live. Constructed without these, the tool returns a
+    /// `not configured` error — keeping pre-Phase-C tests unaffected.
     pub fn with_ask(
         mut self,
         gate: Arc<Mutex<ApprovalGate>>,
-        secrets: Arc<Mutex<AgentSecrets>>,
+        credentials: Arc<CredentialStore>,
     ) -> Self {
         self.approval_gate = Some(gate);
-        self.agent_secrets = Some(secrets);
+        self.credentials = Some(credentials);
         self
     }
 }
@@ -97,10 +98,10 @@ impl McpToolProvider for DaemonToolProvider {
             .approval_gate
             .as_ref()
             .ok_or_else(|| McpProviderError::Other("ask: approval gate not configured".into()))?;
-        let secrets = self
-            .agent_secrets
+        let credentials = self
+            .credentials
             .as_ref()
-            .ok_or_else(|| McpProviderError::Other("ask: secrets slot not configured".into()))?;
+            .ok_or_else(|| McpProviderError::Other("ask: credential store not configured".into()))?;
 
         let action = match req.kind {
             AskKind::PostReview => "post_review",
@@ -125,8 +126,16 @@ impl McpToolProvider for DaemonToolProvider {
                     AskKind::PostReview | AskKind::PostComment | AskKind::RequestToken
                 );
                 let (token, expires_at) = if needs_token {
-                    let s = secrets.lock().await;
-                    (s.gh_token.clone(), s.token_expires_at_hint())
+                    // Phase 4: surface the github.com credential by
+                    // default. Phase 5 extends `AskRequest` with a
+                    // `host` selector and routes through the registry.
+                    match credentials.get(&RepoHostId::github_com()) {
+                        Some(c) => (
+                            Some(c.token().expose().to_string()),
+                            c.expires_at_hint(),
+                        ),
+                        None => (None, None),
+                    }
                 } else {
                     (None, None)
                 };
@@ -246,20 +255,21 @@ mod tests {
     ) -> (
         DaemonToolProvider,
         Arc<Mutex<devdev_tasks::approval::ApprovalHandle>>,
-        Arc<Mutex<AgentSecrets>>,
+        Arc<CredentialStore>,
     ) {
         let (gate, handle) = approval_channel(policy, timeout);
         let gate = Arc::new(Mutex::new(gate));
         let handle = Arc::new(Mutex::new(handle));
-        let mut secrets = AgentSecrets::default();
-        secrets.set_gh_token(token.map(str::to_string));
-        let secrets = Arc::new(Mutex::new(secrets));
+        let store = Arc::new(match token {
+            Some(t) => CredentialStore::with_entry(RepoHostId::github_com(), t),
+            None => CredentialStore::empty(),
+        });
         let provider = DaemonToolProvider::new(
             Arc::new(Mutex::new(TaskRegistry::new())),
             Arc::new(Mutex::new(devdev_workspace::Fs::new())),
         )
-        .with_ask(gate, Arc::clone(&secrets));
-        (provider, handle, secrets)
+        .with_ask(gate, Arc::clone(&store));
+        (provider, handle, store)
     }
 
     #[tokio::test]

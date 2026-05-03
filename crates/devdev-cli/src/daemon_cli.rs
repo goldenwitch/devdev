@@ -273,31 +273,47 @@ pub async fn run_up(args: UpArgs) -> Result<()> {
     // and a user-driven `fs/read` IPC call observe the same bytes.
     let fs = Arc::clone(&daemon.fs);
 
-    // Build the shared approval channel + secrets slot up-front so
-    // both the MCP provider (sender side, via `devdev_ask`) and the
-    // dispatch IPC (receiver side, via `approval_response`) can hold
-    // halves.
+    // Build the shared approval channel + credential snapshot up-
+    // front so both the MCP provider (sender side, via `devdev_ask`)
+    // and the dispatch IPC (receiver side, via `approval_response`)
+    // can hold halves.
     let policy = ApprovalPolicy::AutoApprove;
     let (gate, handle) = approval_channel(policy, APPROVAL_TIMEOUT);
     let approval_gate = Arc::new(Mutex::new(gate));
     let approval_handle = Arc::new(Mutex::new(handle));
-    let agent_secrets = Arc::new(Mutex::new(devdev_daemon::secrets::AgentSecrets::default()));
 
-    // Best-effort `gh auth token` sample — non-fatal if absent.
-    match devdev_daemon::secrets::try_read_gh_token().await {
-        Ok(Some(token)) => {
-            agent_secrets.lock().await.set_gh_token(Some(token));
-            eprintln!("DevDev: gh token sampled (devdev_ask will hand it out on approval)");
+    // Sample credentials exactly once. After this point the store is
+    // immutable; mutating env vars or `gh auth login`-ing will not
+    // affect tokens served from the snapshot until the daemon
+    // restarts.
+    let credentials = {
+        use devdev_daemon::credentials::{
+            CredentialProvider, CredentialStore, EnvVarProvider, GhCliProvider,
+        };
+        use devdev_integrations::host::RepoHostId;
+
+        let github = RepoHostId::github_com();
+        // Env var first (deterministic, scriptable), then `gh` CLI.
+        let providers: Vec<Arc<dyn CredentialProvider>> = vec![
+            Arc::new(EnvVarProvider::new(github.clone(), "GH_TOKEN")),
+            Arc::new(GhCliProvider::new(github.clone())),
+        ];
+        let store = CredentialStore::snapshot(providers).await;
+        match store.get(&github) {
+            Some(c) => eprintln!(
+                "DevDev: github.com credential captured (source: {:?}); devdev_ask will release on approval",
+                c.source()
+            ),
+            None => eprintln!(
+                "DevDev: no github.com credential (set GH_TOKEN or run `gh auth login`)"
+            ),
         }
-        Ok(None) => {
-            eprintln!("DevDev: no gh token (run `gh auth login` to enable PR posting)");
-        }
-        Err(e) => eprintln!("DevDev: gh auth token failed: {e}"),
-    }
+        Arc::new(store)
+    };
 
     let mcp_provider = Arc::new(
         DaemonToolProvider::new(Arc::clone(&tasks), Arc::clone(&fs))
-            .with_ask(Arc::clone(&approval_gate), Arc::clone(&agent_secrets)),
+            .with_ask(Arc::clone(&approval_gate), Arc::clone(&credentials)),
     );
     let mcp_server = McpServer::start(mcp_provider)
         .await
@@ -336,7 +352,7 @@ pub async fn run_up(args: UpArgs) -> Result<()> {
         event_bus,
         ledger,
         policy,
-        agent_secrets,
+        credentials,
         shutdown_tx.clone(),
         fs,
     ));
