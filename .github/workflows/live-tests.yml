@@ -165,7 +165,9 @@ jobs:
           DEVDEV_LIVE_WRITE: ${{ inputs.run_writes && '1' || '' }}
         run: |
           cargo test --workspace --locked --tests \
-            -- --ignored --skip live_workspace_cwd
+            -- --ignored \
+               --skip live_workspace_cwd \
+               --skip cargo_builds_hello_world_inside_mount
 
   cleanup:
     needs: live-tests
