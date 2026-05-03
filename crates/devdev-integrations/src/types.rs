@@ -1,4 +1,10 @@
-//! Data types for GitHub API interactions.
+//! Host-agnostic data types for repository forge interactions.
+//!
+//! These types intentionally avoid GitHub-specific vocabulary
+//! (`check_runs`, `merge_commit_sha`, etc.) so the same shapes can
+//! describe pull requests on GitHub.com, GitHub Enterprise, and
+//! Azure DevOps. Adapter implementations are responsible for the
+//! lossy mappings.
 
 use serde::{Deserialize, Serialize};
 
@@ -61,6 +67,14 @@ pub struct PrStatus {
     pub checks: Vec<CheckRun>,
 }
 
+/// A unifying status-check record.
+///
+/// On GitHub this maps to a Checks API entry (`status`,
+/// `conclusion`). On Azure DevOps it maps to a PR status policy
+/// entry (`state`, `genre/name`). The `status` field follows the
+/// GitHub vocabulary (`queued`, `in_progress`, `completed`) for
+/// historical compatibility; ADO mappings are documented in the
+/// `azure_devops` adapter module.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CheckRun {
     pub name: String,
@@ -68,10 +82,14 @@ pub struct CheckRun {
     pub conclusion: Option<String>,
 }
 
-/// Errors from GitHub API interactions.
+/// Errors from any [`crate::RepoHostAdapter`] implementation.
+///
+/// Adapter-specific status codes are mapped to the closest abstract
+/// variant; the `body` field on [`RepoHostError::ServerError`]
+/// preserves the wire-level detail for diagnostics.
 #[derive(thiserror::Error, Debug)]
-pub enum GitHubError {
-    #[error("authentication failed: check GH_TOKEN")]
+pub enum RepoHostError {
+    #[error("authentication failed: token missing or invalid")]
     Unauthorized,
 
     #[error("not found: {0}")]
@@ -86,15 +104,18 @@ pub enum GitHubError {
     #[error("network error: {0}")]
     Network(String),
 
-    #[error("token not set: GH_TOKEN environment variable is required")]
+    #[error("token not set: a credential is required for this host")]
     TokenNotSet,
 
     #[error("deserialization error: {0}")]
     Deserialize(String),
+
+    #[error("unsupported operation: {0}")]
+    Unsupported(String),
 }
 
-impl From<reqwest::Error> for GitHubError {
+impl From<reqwest::Error> for RepoHostError {
     fn from(e: reqwest::Error) -> Self {
-        GitHubError::Network(e.to_string())
+        RepoHostError::Network(e.to_string())
     }
 }

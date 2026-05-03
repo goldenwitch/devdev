@@ -13,7 +13,7 @@ use devdev_daemon::router::{
     AgentResponse, ResponseChunk, RouterError, SessionBackend, SessionRouter,
 };
 use devdev_daemon::{Daemon, DaemonConfig};
-use devdev_integrations::{MockGitHubAdapter, PrState, PrStatus, PullRequest};
+use devdev_integrations::{MockAdapter, PrState, PrStatus, PullRequest};
 use devdev_tasks::approval::{self, ApprovalPolicy};
 use devdev_tasks::events::{DaemonEvent, EventBus};
 use devdev_tasks::ledger::IdempotencyLedger;
@@ -97,8 +97,8 @@ fn test_pr(sha: &str) -> PullRequest {
     }
 }
 
-fn test_github(sha: &str) -> MockGitHubAdapter {
-    MockGitHubAdapter::new()
+fn test_github(sha: &str) -> MockAdapter {
+    MockAdapter::new()
         .with_pr("test-org", "test-repo", test_pr(sha))
         .with_diff(
             "test-org",
@@ -143,8 +143,8 @@ impl E2EHarness {
         let daemon = Daemon::start(config, false).await.unwrap();
 
         let gh = Arc::new(test_github("sha-initial-001"));
-        let github: Arc<dyn devdev_integrations::GitHubAdapter> =
-            Arc::clone(&gh) as Arc<dyn devdev_integrations::GitHubAdapter>;
+        let github: Arc<dyn devdev_integrations::RepoHostAdapter> =
+            Arc::clone(&gh) as Arc<dyn devdev_integrations::RepoHostAdapter>;
 
         let backend = Arc::new(FakeAgentBackend::new());
         let backend_dyn: Arc<dyn SessionBackend> = backend.clone();

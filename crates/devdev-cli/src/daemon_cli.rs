@@ -35,7 +35,7 @@ use devdev_daemon::ledger::NdjsonLedger;
 use devdev_daemon::mcp::{DaemonToolProvider, McpServer};
 use devdev_daemon::router::SessionRouter;
 use devdev_daemon::{Daemon, DaemonConfig, DaemonError, server};
-use devdev_integrations::{GitHubAdapter, LiveGitHubAdapter, MockGitHubAdapter};
+use devdev_integrations::{GitHubAdapter, MockAdapter, RepoHostAdapter};
 use devdev_tasks::approval::{ApprovalPolicy, approval_channel};
 use devdev_tasks::events::EventBus;
 use devdev_tasks::registry::TaskRegistry;
@@ -176,21 +176,34 @@ fn resolve_data_dir(explicit: Option<PathBuf>) -> PathBuf {
     explicit.unwrap_or_else(DaemonConfig::default_data_dir)
 }
 
-fn select_github_adapter(flag: Option<&str>) -> Arc<dyn GitHubAdapter> {
+/// Build the default repo-host adapter from environment.
+///
+/// Selection precedence: explicit `flag` > `DEVDEV_REPO_HOST_ADAPTER`
+/// env var > `DEVDEV_GITHUB_ADAPTER` (legacy alias) > `"live"`.
+/// `"live"` resolves to a github.com [`GitHubAdapter`] reading
+/// `GH_TOKEN`; if the token is missing we fall back to the
+/// host-agnostic [`MockAdapter`] so dev/test flows still progress.
+///
+/// Multi-host wiring (GHE, ADO) is configured per repo in
+/// preferences and resolved through the daemon-side host registry;
+/// this function only seeds the *default* adapter for the legacy
+/// single-host code paths that haven't migrated yet.
+fn select_github_adapter(flag: Option<&str>) -> Arc<dyn RepoHostAdapter> {
     let choice = flag
         .map(ToOwned::to_owned)
+        .or_else(|| std::env::var("DEVDEV_REPO_HOST_ADAPTER").ok())
         .or_else(|| std::env::var("DEVDEV_GITHUB_ADAPTER").ok())
         .unwrap_or_else(|| "live".to_string());
 
     match choice.as_str() {
-        "mock" => Arc::new(MockGitHubAdapter::new()),
-        _ => match LiveGitHubAdapter::from_env() {
+        "mock" => Arc::new(MockAdapter::new()),
+        _ => match GitHubAdapter::from_env() {
             Ok(adapter) => Arc::new(adapter),
             Err(e) => {
                 eprintln!(
-                    "devdev: GH_TOKEN not available ({e}); falling back to mock GitHub adapter"
+                    "devdev: repo-host token not available ({e}); falling back to mock adapter"
                 );
-                Arc::new(MockGitHubAdapter::new())
+                Arc::new(MockAdapter::new())
             }
         },
     }

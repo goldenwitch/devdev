@@ -7,7 +7,7 @@ use std::time::Duration;
 use serde_json::{Value, json};
 use tokio::sync::{Mutex, watch};
 
-use devdev_integrations::GitHubAdapter;
+use devdev_integrations::RepoHostAdapter;
 use devdev_tasks::approval::{
     ApprovalGate, ApprovalHandle, ApprovalPolicy, ApprovalResponse, approval_channel,
 };
@@ -27,7 +27,7 @@ use crate::secrets::AgentSecrets;
 pub struct DispatchContext {
     pub router: Arc<SessionRouter>,
     pub tasks: Arc<Mutex<TaskRegistry>>,
-    pub github: Arc<dyn GitHubAdapter>,
+    pub github: Arc<dyn RepoHostAdapter>,
     /// Sender side of the approval channel, used by `devdev_ask` to
     /// request user approval before the agent takes external action.
     pub approval_gate: Arc<Mutex<ApprovalGate>>,
@@ -59,7 +59,7 @@ impl DispatchContext {
     pub fn new(
         router: Arc<SessionRouter>,
         tasks: Arc<Mutex<TaskRegistry>>,
-        github: Arc<dyn GitHubAdapter>,
+        github: Arc<dyn RepoHostAdapter>,
         approval_gate: Arc<Mutex<ApprovalGate>>,
         approval_handle: Arc<Mutex<ApprovalHandle>>,
         event_bus: EventBus,

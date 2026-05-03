@@ -2,7 +2,7 @@
 //!
 //! The polling counterpart to a webhook receiver. Each tick:
 //!
-//! 1. List open PRs via the [`GitHubAdapter`].
+//! 1. List open PRs via the [`RepoHostAdapter`].
 //! 2. For each PR, compute a state hash (head_sha + updated_at) and
 //!    consult the [`IdempotencyLedger`]. If we've seen this exact
 //!    state, skip — we already published the corresponding event.
@@ -20,7 +20,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use devdev_integrations::{GitHubAdapter, pr_state_hash};
+use devdev_integrations::{RepoHostAdapter, pr_state_hash};
 
 use crate::events::{DaemonEvent, EventBus};
 use crate::ledger::{IdempotencyLedger, LedgerKey};
@@ -40,7 +40,7 @@ pub struct RepoWatchTask {
     /// When `poll()` last actually ran. `None` until the first run.
     last_polled: Option<Instant>,
     status: TaskStatus,
-    github: Arc<dyn GitHubAdapter>,
+    github: Arc<dyn RepoHostAdapter>,
     ledger: Arc<dyn IdempotencyLedger>,
     bus: EventBus,
 }
@@ -50,7 +50,7 @@ impl RepoWatchTask {
         id: String,
         owner: impl Into<String>,
         repo: impl Into<String>,
-        github: Arc<dyn GitHubAdapter>,
+        github: Arc<dyn RepoHostAdapter>,
         ledger: Arc<dyn IdempotencyLedger>,
         bus: EventBus,
     ) -> Self {
@@ -245,7 +245,7 @@ impl Task for RepoWatchTask {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use devdev_integrations::{MockGitHubAdapter, PrState, PullRequest};
+    use devdev_integrations::{MockAdapter, PrState, PullRequest};
 
     /// In-memory test ledger.
     #[derive(Default)]
@@ -287,18 +287,18 @@ mod tests {
 
     fn task() -> (
         RepoWatchTask,
-        Arc<MockGitHubAdapter>,
+        Arc<MockAdapter>,
         Arc<MemLedger>,
         EventBus,
     ) {
-        let gh = Arc::new(MockGitHubAdapter::new());
+        let gh = Arc::new(MockAdapter::new());
         let ledger = Arc::new(MemLedger::default());
         let bus = EventBus::new();
         let t = RepoWatchTask::new(
             "t-1".into(),
             "o",
             "r",
-            gh.clone() as Arc<dyn GitHubAdapter>,
+            gh.clone() as Arc<dyn RepoHostAdapter>,
             ledger.clone() as Arc<dyn IdempotencyLedger>,
             bus.clone(),
         )
@@ -319,7 +319,7 @@ mod tests {
 
     #[tokio::test]
     async fn first_pr_emits_opened() {
-        let gh = Arc::new(MockGitHubAdapter::new().with_pr("o", "r", pr(1, "sha1", "t1")));
+        let gh = Arc::new(MockAdapter::new().with_pr("o", "r", pr(1, "sha1", "t1")));
         let ledger = Arc::new(MemLedger::default());
         let bus = EventBus::new();
         let mut rx = bus.subscribe();
@@ -327,7 +327,7 @@ mod tests {
             "t-1".into(),
             "o",
             "r",
-            gh as Arc<dyn GitHubAdapter>,
+            gh as Arc<dyn RepoHostAdapter>,
             ledger as Arc<dyn IdempotencyLedger>,
             bus,
         )
@@ -339,7 +339,7 @@ mod tests {
 
     #[tokio::test]
     async fn second_poll_no_change_emits_nothing() {
-        let gh = Arc::new(MockGitHubAdapter::new().with_pr("o", "r", pr(1, "sha1", "t1")));
+        let gh = Arc::new(MockAdapter::new().with_pr("o", "r", pr(1, "sha1", "t1")));
         let ledger = Arc::new(MemLedger::default());
         let bus = EventBus::new();
         let mut rx = bus.subscribe();
@@ -347,7 +347,7 @@ mod tests {
             "t-1".into(),
             "o",
             "r",
-            gh as Arc<dyn GitHubAdapter>,
+            gh as Arc<dyn RepoHostAdapter>,
             ledger as Arc<dyn IdempotencyLedger>,
             bus,
         )
@@ -361,7 +361,7 @@ mod tests {
 
     #[tokio::test]
     async fn updated_pr_emits_pr_updated() {
-        let gh = Arc::new(MockGitHubAdapter::new().with_pr("o", "r", pr(1, "sha1", "t1")));
+        let gh = Arc::new(MockAdapter::new().with_pr("o", "r", pr(1, "sha1", "t1")));
         let ledger = Arc::new(MemLedger::default());
         let bus = EventBus::new();
         let mut rx = bus.subscribe();
@@ -369,7 +369,7 @@ mod tests {
             "t-1".into(),
             "o",
             "r",
-            gh.clone() as Arc<dyn GitHubAdapter>,
+            gh.clone() as Arc<dyn RepoHostAdapter>,
             ledger as Arc<dyn IdempotencyLedger>,
             bus,
         )
@@ -386,7 +386,7 @@ mod tests {
     #[tokio::test]
     async fn closed_pr_emits_pr_closed() {
         // Two adapters: one with PR open, one without.
-        let gh_open = Arc::new(MockGitHubAdapter::new().with_pr("o", "r", pr(1, "sha1", "t1")));
+        let gh_open = Arc::new(MockAdapter::new().with_pr("o", "r", pr(1, "sha1", "t1")));
         let ledger = Arc::new(MemLedger::default());
         let bus = EventBus::new();
         let mut rx = bus.subscribe();
@@ -394,7 +394,7 @@ mod tests {
             "t-1".into(),
             "o",
             "r",
-            gh_open as Arc<dyn GitHubAdapter>,
+            gh_open as Arc<dyn RepoHostAdapter>,
             ledger.clone() as Arc<dyn IdempotencyLedger>,
             bus.clone(),
         )
@@ -403,7 +403,7 @@ mod tests {
         let _ = rx.recv().await.unwrap();
 
         // Replace adapter with empty one (PR disappeared).
-        let gh_empty = Arc::new(MockGitHubAdapter::new());
+        let gh_empty = Arc::new(MockAdapter::new());
         t.github = gh_empty;
         t.poll().await.unwrap();
         let evt = rx.recv().await.unwrap();
@@ -412,7 +412,7 @@ mod tests {
 
     #[tokio::test]
     async fn ledger_dedups_across_restart() {
-        let gh = Arc::new(MockGitHubAdapter::new().with_pr("o", "r", pr(1, "sha1", "t1")));
+        let gh = Arc::new(MockAdapter::new().with_pr("o", "r", pr(1, "sha1", "t1")));
         let ledger = Arc::new(MemLedger::default());
         let bus = EventBus::new();
         let mut rx = bus.subscribe();
@@ -422,7 +422,7 @@ mod tests {
             "t-1".into(),
             "o",
             "r",
-            gh.clone() as Arc<dyn GitHubAdapter>,
+            gh.clone() as Arc<dyn RepoHostAdapter>,
             ledger.clone() as Arc<dyn IdempotencyLedger>,
             bus.clone(),
         )
@@ -439,7 +439,7 @@ mod tests {
             "t-1".into(),
             "o",
             "r",
-            gh.clone() as Arc<dyn GitHubAdapter>,
+            gh.clone() as Arc<dyn RepoHostAdapter>,
             ledger.clone() as Arc<dyn IdempotencyLedger>,
             bus,
         )

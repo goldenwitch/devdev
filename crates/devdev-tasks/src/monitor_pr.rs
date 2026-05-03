@@ -15,7 +15,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use devdev_integrations::GitHubAdapter;
+use devdev_integrations::RepoHostAdapter;
 use tokio::sync::broadcast::{Receiver, error::TryRecvError};
 
 use crate::agent::AgentRunner;
@@ -31,7 +31,7 @@ pub struct MonitorPrTask {
     last_sha: Option<String>,
     observations: Vec<String>,
     poll_interval: Duration,
-    github: Arc<dyn GitHubAdapter>,
+    github: Arc<dyn RepoHostAdapter>,
     runner: Arc<dyn AgentRunner>,
     rx: Receiver<DaemonEvent>,
     /// Paths to `.devdev/*.md` preference files (Vibe Check, Phase D).
@@ -43,7 +43,7 @@ impl MonitorPrTask {
     pub fn new(
         id: String,
         pr_ref_str: &str,
-        github: Arc<dyn GitHubAdapter>,
+        github: Arc<dyn RepoHostAdapter>,
         runner: Arc<dyn AgentRunner>,
         bus: &EventBus,
     ) -> Result<Self, TaskError> {

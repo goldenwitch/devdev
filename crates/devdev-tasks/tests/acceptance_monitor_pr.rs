@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use devdev_integrations::{MockGitHubAdapter, PrState, PrStatus, PullRequest};
+use devdev_integrations::{MockAdapter, PrState, PrStatus, PullRequest};
 use devdev_tasks::agent::AgentRunner;
 use devdev_tasks::events::{DaemonEvent, EventBus};
 use devdev_tasks::monitor_pr::MonitorPrTask;
@@ -27,8 +27,8 @@ fn mock_pr(number: u64, sha: &str) -> PullRequest {
     }
 }
 
-fn mock_github(sha: &str) -> MockGitHubAdapter {
-    MockGitHubAdapter::new()
+fn mock_github(sha: &str) -> MockAdapter {
+    MockAdapter::new()
         .with_pr("org", "repo", mock_pr(247, sha))
         .with_diff(
             "org",
@@ -102,7 +102,7 @@ fn parse_structured_review() {
 
 #[tokio::test]
 async fn idle_with_no_events_is_quiet() {
-    let gh: Arc<dyn devdev_integrations::GitHubAdapter> = Arc::new(mock_github("abc123"));
+    let gh: Arc<dyn devdev_integrations::RepoHostAdapter> = Arc::new(mock_github("abc123"));
     let bus = EventBus::new();
     let runner: Arc<dyn AgentRunner> = Arc::new(FakeRunner::default());
     let mut task = MonitorPrTask::new("t-1".into(), "org/repo#247", gh, runner, &bus).unwrap();
@@ -113,7 +113,7 @@ async fn idle_with_no_events_is_quiet() {
 
 #[tokio::test]
 async fn pr_opened_event_triggers_agent_prompt() {
-    let gh: Arc<dyn devdev_integrations::GitHubAdapter> = Arc::new(mock_github("abc123"));
+    let gh: Arc<dyn devdev_integrations::RepoHostAdapter> = Arc::new(mock_github("abc123"));
     let bus = EventBus::new();
     let runner = Arc::new(FakeRunner::default());
     let runner_dyn: Arc<dyn AgentRunner> = runner.clone();
@@ -136,7 +136,7 @@ async fn pr_opened_event_triggers_agent_prompt() {
 
 #[tokio::test]
 async fn pr_updated_event_triggers_agent_prompt() {
-    let gh: Arc<dyn devdev_integrations::GitHubAdapter> = Arc::new(mock_github("abc123"));
+    let gh: Arc<dyn devdev_integrations::RepoHostAdapter> = Arc::new(mock_github("abc123"));
     let bus = EventBus::new();
     let runner = Arc::new(FakeRunner::default());
     let runner_dyn: Arc<dyn AgentRunner> = runner.clone();
@@ -157,7 +157,7 @@ async fn pr_updated_event_triggers_agent_prompt() {
 
 #[tokio::test]
 async fn pr_closed_event_completes_task() {
-    let gh: Arc<dyn devdev_integrations::GitHubAdapter> = Arc::new(mock_github("abc123"));
+    let gh: Arc<dyn devdev_integrations::RepoHostAdapter> = Arc::new(mock_github("abc123"));
     let bus = EventBus::new();
     let runner: Arc<dyn AgentRunner> = Arc::new(FakeRunner::default());
     let mut task = MonitorPrTask::new("t-1".into(), "org/repo#247", gh, runner, &bus).unwrap();
@@ -176,7 +176,7 @@ async fn pr_closed_event_completes_task() {
 
 #[tokio::test]
 async fn non_matching_event_is_ignored() {
-    let gh: Arc<dyn devdev_integrations::GitHubAdapter> = Arc::new(mock_github("abc123"));
+    let gh: Arc<dyn devdev_integrations::RepoHostAdapter> = Arc::new(mock_github("abc123"));
     let bus = EventBus::new();
     let runner = Arc::new(FakeRunner::default());
     let runner_dyn: Arc<dyn AgentRunner> = runner.clone();
@@ -197,7 +197,7 @@ async fn non_matching_event_is_ignored() {
 
 #[tokio::test]
 async fn observations_accumulate_across_events() {
-    let gh: Arc<dyn devdev_integrations::GitHubAdapter> = Arc::new(mock_github("abc123"));
+    let gh: Arc<dyn devdev_integrations::RepoHostAdapter> = Arc::new(mock_github("abc123"));
     let bus = EventBus::new();
     let runner: Arc<dyn AgentRunner> = Arc::new(FakeRunner::default());
     let mut task = MonitorPrTask::new("t-1".into(), "org/repo#247", gh, runner, &bus).unwrap();
@@ -225,8 +225,8 @@ async fn observations_accumulate_across_events() {
 async fn merged_pr_short_circuits_to_completed() {
     let mut pr = mock_pr(247, "abc123");
     pr.state = PrState::Merged;
-    let gh: Arc<dyn devdev_integrations::GitHubAdapter> = Arc::new(
-        MockGitHubAdapter::new()
+    let gh: Arc<dyn devdev_integrations::RepoHostAdapter> = Arc::new(
+        MockAdapter::new()
             .with_pr("org", "repo", pr)
             .with_diff("org", "repo", 247, ""),
     );
@@ -246,7 +246,7 @@ async fn merged_pr_short_circuits_to_completed() {
 
 #[tokio::test]
 async fn serialize_includes_pr_state() {
-    let gh: Arc<dyn devdev_integrations::GitHubAdapter> = Arc::new(mock_github("abc123"));
+    let gh: Arc<dyn devdev_integrations::RepoHostAdapter> = Arc::new(mock_github("abc123"));
     let bus = EventBus::new();
     let runner: Arc<dyn AgentRunner> = Arc::new(FakeRunner::default());
     let task = MonitorPrTask::new("t-1".into(), "org/repo#247", gh, runner, &bus).unwrap();

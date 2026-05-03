@@ -1,10 +1,10 @@
 //! Acceptance tests for P2-05 — GitHub Integration Adapter.
 //!
-//! These tests use the MockGitHubAdapter. Live API tests are gated
+//! These tests use the MockAdapter. Live API tests are gated
 //! behind DEVDEV_E2E (not run in CI).
 
 use devdev_integrations::{
-    CheckRun, Comment, GitHubAdapter, GitHubError, MockGitHubAdapter, PrState, PrStatus,
+    CheckRun, Comment, RepoHostAdapter, RepoHostError, MockAdapter, PrState, PrStatus,
     PullRequest, Review, ReviewComment, ReviewEvent,
 };
 
@@ -28,7 +28,7 @@ fn sample_pr() -> PullRequest {
 
 #[tokio::test]
 async fn mock_returns_configured_pr() {
-    let adapter = MockGitHubAdapter::new().with_pr("org", "repo", sample_pr());
+    let adapter = MockAdapter::new().with_pr("org", "repo", sample_pr());
 
     let pr = adapter.get_pr("org", "repo", 42).await.unwrap();
     assert_eq!(pr.number, 42);
@@ -42,9 +42,9 @@ async fn mock_returns_configured_pr() {
 
 #[tokio::test]
 async fn mock_get_pr_not_found() {
-    let adapter = MockGitHubAdapter::new();
+    let adapter = MockAdapter::new();
     let err = adapter.get_pr("org", "repo", 999).await.err().unwrap();
-    assert!(matches!(err, GitHubError::NotFound(_)));
+    assert!(matches!(err, RepoHostError::NotFound(_)));
 }
 
 // ── Mock: get_pr_diff ──────────────────────────────────────────
@@ -53,7 +53,7 @@ async fn mock_get_pr_not_found() {
 async fn mock_get_pr_diff_returns_diff() {
     let diff =
         "diff --git a/file.rs b/file.rs\n--- a/file.rs\n+++ b/file.rs\n@@ -1 +1 @@\n-old\n+new\n";
-    let adapter = MockGitHubAdapter::new().with_diff("org", "repo", 42, diff);
+    let adapter = MockAdapter::new().with_diff("org", "repo", 42, diff);
 
     let result = adapter.get_pr_diff("org", "repo", 42).await.unwrap();
     assert_eq!(result, diff);
@@ -81,7 +81,7 @@ async fn mock_list_comments() {
             created_at: "2025-01-01T01:00:00Z".into(),
         },
     ];
-    let adapter = MockGitHubAdapter::new().with_comments("org", "repo", 42, comments);
+    let adapter = MockAdapter::new().with_comments("org", "repo", 42, comments);
 
     let result = adapter.list_pr_comments("org", "repo", 42).await.unwrap();
     assert_eq!(result.len(), 2);
@@ -93,7 +93,7 @@ async fn mock_list_comments() {
 
 #[tokio::test]
 async fn mock_list_comments_empty_for_unknown_pr() {
-    let adapter = MockGitHubAdapter::new();
+    let adapter = MockAdapter::new();
     let result = adapter.list_pr_comments("org", "repo", 99).await.unwrap();
     assert!(result.is_empty());
 }
@@ -102,7 +102,7 @@ async fn mock_list_comments_empty_for_unknown_pr() {
 
 #[tokio::test]
 async fn mock_records_posted_reviews() {
-    let adapter = MockGitHubAdapter::new();
+    let adapter = MockAdapter::new();
 
     let review = Review {
         event: ReviewEvent::Comment,
@@ -133,7 +133,7 @@ async fn mock_records_posted_reviews() {
 
 #[tokio::test]
 async fn mock_records_posted_comments() {
-    let adapter = MockGitHubAdapter::new();
+    let adapter = MockAdapter::new();
 
     adapter
         .post_comment("org", "repo", 42, "Nice work!")
@@ -154,7 +154,7 @@ async fn mock_records_posted_comments() {
 
 #[tokio::test]
 async fn mock_get_pr_head_sha() {
-    let adapter = MockGitHubAdapter::new().with_pr("org", "repo", sample_pr());
+    let adapter = MockAdapter::new().with_pr("org", "repo", sample_pr());
 
     let sha = adapter.get_pr_head_sha("org", "repo", 42).await.unwrap();
     assert_eq!(sha, "abc123");
@@ -180,7 +180,7 @@ async fn mock_get_pr_status() {
         ],
     };
 
-    let adapter = MockGitHubAdapter::new().with_status("org", "repo", 42, status);
+    let adapter = MockAdapter::new().with_status("org", "repo", 42, status);
 
     let result = adapter.get_pr_status("org", "repo", 42).await.unwrap();
     assert_eq!(result.mergeable, Some(true));
@@ -193,22 +193,22 @@ async fn mock_get_pr_status() {
 
 #[tokio::test]
 async fn mock_diff_not_found() {
-    let adapter = MockGitHubAdapter::new();
+    let adapter = MockAdapter::new();
     let err = adapter.get_pr_diff("org", "repo", 99).await.err().unwrap();
-    assert!(matches!(err, GitHubError::NotFound(_)));
+    assert!(matches!(err, RepoHostError::NotFound(_)));
 }
 
 // ── Mock: status not found ─────────────────────────────────────
 
 #[tokio::test]
 async fn mock_status_not_found() {
-    let adapter = MockGitHubAdapter::new();
+    let adapter = MockAdapter::new();
     let err = adapter
         .get_pr_status("org", "repo", 99)
         .await
         .err()
         .unwrap();
-    assert!(matches!(err, GitHubError::NotFound(_)));
+    assert!(matches!(err, RepoHostError::NotFound(_)));
 }
 
 // ── Live: token_not_set_errors ─────────────────────────────────
@@ -218,10 +218,10 @@ fn token_not_set_errors() {
     // Ensure GH_TOKEN is not set for this test
     // SAFETY: No other threads are reading GH_TOKEN concurrently in this test.
     unsafe { std::env::remove_var("GH_TOKEN") };
-    let result = devdev_integrations::LiveGitHubAdapter::from_env();
+    let result = devdev_integrations::GitHubAdapter::from_env();
     assert!(result.is_err());
     match result.err().unwrap() {
-        GitHubError::TokenNotSet => {}
+        RepoHostError::TokenNotSet => {}
         e => panic!("expected TokenNotSet, got: {e}"),
     }
 }
@@ -230,7 +230,7 @@ fn token_not_set_errors() {
 
 #[tokio::test]
 async fn mock_post_review_preserves_event_type() {
-    let adapter = MockGitHubAdapter::new();
+    let adapter = MockAdapter::new();
 
     // Post an approval
     let review = Review {
@@ -265,7 +265,7 @@ async fn mock_pr_state_variants() {
     merged_pr.number = 20;
     merged_pr.state = PrState::Merged;
 
-    let adapter = MockGitHubAdapter::new()
+    let adapter = MockAdapter::new()
         .with_pr("org", "repo", sample_pr()) // Open, #42
         .with_pr("org", "repo", closed_pr)
         .with_pr("org", "repo", merged_pr);

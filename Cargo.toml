@@ -44,6 +44,9 @@ clap = { version = "4", features = ["derive"] }
 # HTTP
 reqwest = { version = "0.12", features = ["json"] }
 
+# Base64 (used by ADO Basic-auth header construction)
+base64 = "0.22"
+
 # MCP (Model Context Protocol) — used by devdev-daemon to expose DevDev
 # state to Copilot agents via Streamable HTTP. PoC at target/tmp/poc-mcp-rs/.
 rmcp = { version = "0.9", features = [
