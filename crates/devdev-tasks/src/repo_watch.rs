@@ -20,18 +20,19 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use devdev_integrations::host::RepoHostId;
 use devdev_integrations::{RepoHostAdapter, pr_state_hash};
 
 use crate::events::{DaemonEvent, EventBus};
 use crate::ledger::{IdempotencyLedger, LedgerKey};
 use crate::task::{Task, TaskError, TaskMessage, TaskStatus};
 
-const ADAPTER: &str = "github";
 const RESOURCE_TYPE: &str = "pr_state";
 
 /// A task that polls a single repo's open PRs and emits events.
 pub struct RepoWatchTask {
     id: String,
+    host_id: RepoHostId,
     owner: String,
     repo: String,
     /// `pr_number → state_hash` for the most recent poll.
@@ -48,6 +49,7 @@ pub struct RepoWatchTask {
 impl RepoWatchTask {
     pub fn new(
         id: String,
+        host_id: RepoHostId,
         owner: impl Into<String>,
         repo: impl Into<String>,
         github: Arc<dyn RepoHostAdapter>,
@@ -56,6 +58,7 @@ impl RepoWatchTask {
     ) -> Self {
         Self {
             id,
+            host_id,
             owner: owner.into(),
             repo: repo.into(),
             last_seen: HashMap::new(),
@@ -71,6 +74,10 @@ impl RepoWatchTask {
     pub fn with_interval(mut self, interval: Duration) -> Self {
         self.poll_interval = interval;
         self
+    }
+
+    pub fn host_id(&self) -> &RepoHostId {
+        &self.host_id
     }
 
     pub fn owner(&self) -> &str {
@@ -99,7 +106,12 @@ impl RepoWatchTask {
             let hash = pr_state_hash(pr);
             current.insert(pr.number, hash.clone());
 
-            let key = LedgerKey::new(ADAPTER, RESOURCE_TYPE, self.resource_id(pr.number), &hash);
+            let key = LedgerKey::new(
+                self.host_id.ledger_key(),
+                RESOURCE_TYPE,
+                self.resource_id(pr.number),
+                &hash,
+            );
 
             // Two independent questions:
             //   1. Have we already published this exact state hash?
@@ -125,6 +137,7 @@ impl RepoWatchTask {
 
             let event = if first_in_session {
                 DaemonEvent::PrOpened {
+                    host_id: self.host_id.clone(),
                     owner: self.owner.clone(),
                     repo: self.repo.clone(),
                     number: pr.number,
@@ -132,6 +145,7 @@ impl RepoWatchTask {
                 }
             } else {
                 DaemonEvent::PrUpdated {
+                    host_id: self.host_id.clone(),
                     owner: self.owner.clone(),
                     repo: self.repo.clone(),
                     number: pr.number,
@@ -171,6 +185,7 @@ impl RepoWatchTask {
                 // (mergeable=false) and let MonitorPrTask resolve via
                 // its own get_pr_status if it cares.
                 let event = DaemonEvent::PrClosed {
+                    host_id: self.host_id.clone(),
                     owner: self.owner.clone(),
                     repo: self.repo.clone(),
                     number: *number,
@@ -197,7 +212,12 @@ impl Task for RepoWatchTask {
     }
 
     fn describe(&self) -> String {
-        format!("Watching {}/{} for PR events", self.owner, self.repo)
+        format!(
+            "Watching {}/{} for PR events ({})",
+            self.owner,
+            self.repo,
+            self.host_id.ledger_key()
+        )
     }
 
     fn status(&self) -> &TaskStatus {
@@ -226,6 +246,7 @@ impl Task for RepoWatchTask {
     fn serialize(&self) -> Result<serde_json::Value, TaskError> {
         Ok(serde_json::json!({
             "id": self.id,
+            "host": self.host_id.ledger_key(),
             "owner": self.owner,
             "repo": self.repo,
             "last_seen": self.last_seen,
@@ -296,6 +317,7 @@ mod tests {
         let bus = EventBus::new();
         let t = RepoWatchTask::new(
             "t-1".into(),
+            RepoHostId::github_com(),
             "o",
             "r",
             gh.clone() as Arc<dyn RepoHostAdapter>,
@@ -325,6 +347,7 @@ mod tests {
         let mut rx = bus.subscribe();
         let mut t = RepoWatchTask::new(
             "t-1".into(),
+            RepoHostId::github_com(),
             "o",
             "r",
             gh as Arc<dyn RepoHostAdapter>,
@@ -345,6 +368,7 @@ mod tests {
         let mut rx = bus.subscribe();
         let mut t = RepoWatchTask::new(
             "t-1".into(),
+            RepoHostId::github_com(),
             "o",
             "r",
             gh as Arc<dyn RepoHostAdapter>,
@@ -367,6 +391,7 @@ mod tests {
         let mut rx = bus.subscribe();
         let mut t = RepoWatchTask::new(
             "t-1".into(),
+            RepoHostId::github_com(),
             "o",
             "r",
             gh.clone() as Arc<dyn RepoHostAdapter>,
@@ -392,6 +417,7 @@ mod tests {
         let mut rx = bus.subscribe();
         let mut t = RepoWatchTask::new(
             "t-1".into(),
+            RepoHostId::github_com(),
             "o",
             "r",
             gh_open as Arc<dyn RepoHostAdapter>,
@@ -420,6 +446,7 @@ mod tests {
         // First task instance: emits PrOpened, records ledger.
         let mut t1 = RepoWatchTask::new(
             "t-1".into(),
+            RepoHostId::github_com(),
             "o",
             "r",
             gh.clone() as Arc<dyn RepoHostAdapter>,
@@ -437,6 +464,7 @@ mod tests {
         // even though the ledger already has the state hash.
         let mut t2 = RepoWatchTask::new(
             "t-1".into(),
+            RepoHostId::github_com(),
             "o",
             "r",
             gh.clone() as Arc<dyn RepoHostAdapter>,

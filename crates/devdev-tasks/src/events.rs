@@ -5,6 +5,7 @@
 //! without taking a daemon dependency. The bus is a thin
 //! `tokio::sync::broadcast` wrapper — see [`EventBus::publish`].
 
+use devdev_integrations::host::RepoHostId;
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 
@@ -14,18 +15,21 @@ const CHANNEL_CAPACITY: usize = 1024;
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum DaemonEvent {
     PrOpened {
+        host_id: RepoHostId,
         owner: String,
         repo: String,
         number: u64,
         head_sha: String,
     },
     PrUpdated {
+        host_id: RepoHostId,
         owner: String,
         repo: String,
         number: u64,
         head_sha: String,
     },
     PrClosed {
+        host_id: RepoHostId,
         owner: String,
         repo: String,
         number: u64,
@@ -34,28 +38,34 @@ pub enum DaemonEvent {
 }
 
 impl DaemonEvent {
-    /// `(owner, repo, number)` — subscribers filter the broadcast on
-    /// this tuple to scope to a single PR.
-    pub fn pr_target(&self) -> Option<(&str, &str, u64)> {
+    /// `(host_id, owner, repo, number)` — subscribers filter the
+    /// broadcast on this tuple to scope to a single PR. Identical
+    /// `(owner, repo, number)` triples on different hosts (e.g. a
+    /// fork on github.com and a mirror on a GHE install) MUST not
+    /// collide; the host_id is the disambiguator.
+    pub fn pr_target(&self) -> Option<(&RepoHostId, &str, &str, u64)> {
         match self {
             DaemonEvent::PrOpened {
+                host_id,
                 owner,
                 repo,
                 number,
                 ..
             }
             | DaemonEvent::PrUpdated {
+                host_id,
                 owner,
                 repo,
                 number,
                 ..
             }
             | DaemonEvent::PrClosed {
+                host_id,
                 owner,
                 repo,
                 number,
                 ..
-            } => Some((owner.as_str(), repo.as_str(), *number)),
+            } => Some((host_id, owner.as_str(), repo.as_str(), *number)),
         }
     }
 }
@@ -98,6 +108,7 @@ mod tests {
 
     fn opened(n: u64) -> DaemonEvent {
         DaemonEvent::PrOpened {
+            host_id: RepoHostId::github_com(),
             owner: "o".into(),
             repo: "r".into(),
             number: n,
@@ -132,14 +143,38 @@ mod tests {
 
     #[tokio::test]
     async fn pr_target_extracts_tuple() {
+        let host = RepoHostId::github_com();
         let e = opened(42);
-        assert_eq!(e.pr_target(), Some(("o", "r", 42)));
+        assert_eq!(e.pr_target(), Some((&host, "o", "r", 42)));
         let c = DaemonEvent::PrClosed {
+            host_id: host.clone(),
             owner: "o".into(),
             repo: "r".into(),
             number: 42,
             merged: true,
         };
-        assert_eq!(c.pr_target(), Some(("o", "r", 42)));
+        assert_eq!(c.pr_target(), Some((&host, "o", "r", 42)));
+    }
+
+    #[tokio::test]
+    async fn pr_target_disambiguates_by_host() {
+        // Same (owner, repo, number) on github.com vs a GHE install
+        // must produce distinct event identities.
+        let gh = DaemonEvent::PrOpened {
+            host_id: RepoHostId::github_com(),
+            owner: "o".into(),
+            repo: "r".into(),
+            number: 1,
+            head_sha: "a".into(),
+        };
+        let ghe = DaemonEvent::PrOpened {
+            host_id: RepoHostId::ghe("ghe.example.com"),
+            owner: "o".into(),
+            repo: "r".into(),
+            number: 1,
+            head_sha: "a".into(),
+        };
+        assert_ne!(gh, ghe);
+        assert_ne!(gh.pr_target().unwrap().0, ghe.pr_target().unwrap().0);
     }
 }

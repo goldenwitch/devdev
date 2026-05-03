@@ -120,6 +120,7 @@ async fn pr_opened_event_triggers_agent_prompt() {
     let mut task = MonitorPrTask::new("t-1".into(), "org/repo#247", gh, runner_dyn, &bus).unwrap();
 
     bus.publish(DaemonEvent::PrOpened {
+        host_id: devdev_integrations::host::RepoHostId::github_com(),
         owner: "org".into(),
         repo: "repo".into(),
         number: 247,
@@ -143,6 +144,7 @@ async fn pr_updated_event_triggers_agent_prompt() {
     let mut task = MonitorPrTask::new("t-1".into(), "org/repo#247", gh, runner_dyn, &bus).unwrap();
 
     bus.publish(DaemonEvent::PrUpdated {
+        host_id: devdev_integrations::host::RepoHostId::github_com(),
         owner: "org".into(),
         repo: "repo".into(),
         number: 247,
@@ -163,6 +165,7 @@ async fn pr_closed_event_completes_task() {
     let mut task = MonitorPrTask::new("t-1".into(), "org/repo#247", gh, runner, &bus).unwrap();
 
     bus.publish(DaemonEvent::PrClosed {
+        host_id: devdev_integrations::host::RepoHostId::github_com(),
         owner: "org".into(),
         repo: "repo".into(),
         number: 247,
@@ -184,6 +187,7 @@ async fn non_matching_event_is_ignored() {
 
     // Different PR number.
     bus.publish(DaemonEvent::PrOpened {
+        host_id: devdev_integrations::host::RepoHostId::github_com(),
         owner: "org".into(),
         repo: "repo".into(),
         number: 999,
@@ -203,6 +207,7 @@ async fn observations_accumulate_across_events() {
     let mut task = MonitorPrTask::new("t-1".into(), "org/repo#247", gh, runner, &bus).unwrap();
 
     bus.publish(DaemonEvent::PrOpened {
+        host_id: devdev_integrations::host::RepoHostId::github_com(),
         owner: "org".into(),
         repo: "repo".into(),
         number: 247,
@@ -211,6 +216,7 @@ async fn observations_accumulate_across_events() {
     task.poll().await.unwrap();
 
     bus.publish(DaemonEvent::PrUpdated {
+        host_id: devdev_integrations::host::RepoHostId::github_com(),
         owner: "org".into(),
         repo: "repo".into(),
         number: 247,
@@ -235,6 +241,7 @@ async fn merged_pr_short_circuits_to_completed() {
     let mut task = MonitorPrTask::new("t-1".into(), "org/repo#247", gh, runner, &bus).unwrap();
 
     bus.publish(DaemonEvent::PrUpdated {
+        host_id: devdev_integrations::host::RepoHostId::github_com(),
         owner: "org".into(),
         repo: "repo".into(),
         number: 247,

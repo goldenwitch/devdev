@@ -255,6 +255,7 @@ async fn pr_opened_event_drives_agent_prompt() {
     .await;
 
     harness.bus.publish(DaemonEvent::PrOpened {
+        host_id: devdev_integrations::host::RepoHostId::github_com(),
         owner: "test-org".into(),
         repo: "test-repo".into(),
         number: 1,
@@ -288,6 +289,7 @@ async fn pr_closed_event_completes_task() {
     .await;
 
     harness.bus.publish(DaemonEvent::PrClosed {
+        host_id: devdev_integrations::host::RepoHostId::github_com(),
         owner: "test-org".into(),
         repo: "test-repo".into(),
         number: 1,
@@ -318,6 +320,7 @@ async fn pr_updated_event_reprompts_agent() {
     .await;
 
     harness.bus.publish(DaemonEvent::PrOpened {
+        host_id: devdev_integrations::host::RepoHostId::github_com(),
         owner: "test-org".into(),
         repo: "test-repo".into(),
         number: 1,
@@ -326,6 +329,7 @@ async fn pr_updated_event_reprompts_agent() {
     harness.advance_polls(1).await;
 
     harness.bus.publish(DaemonEvent::PrUpdated {
+        host_id: devdev_integrations::host::RepoHostId::github_com(),
         owner: "test-org".into(),
         repo: "test-repo".into(),
         number: 1,
@@ -353,6 +357,7 @@ async fn unrelated_pr_event_is_ignored() {
 
     // Different number.
     harness.bus.publish(DaemonEvent::PrOpened {
+        host_id: devdev_integrations::host::RepoHostId::github_com(),
         owner: "test-org".into(),
         repo: "test-repo".into(),
         number: 2,

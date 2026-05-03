@@ -83,8 +83,11 @@ impl MonitorPrTask {
     /// Whether an event targets this task's PR.
     fn matches(&self, ev: &DaemonEvent) -> bool {
         match ev.pr_target() {
-            Some((o, r, n)) => {
-                o == self.pr_ref.owner && r == self.pr_ref.repo && n == self.pr_ref.number
+            Some((host, o, r, n)) => {
+                host == &self.pr_ref.host_id
+                    && o == self.pr_ref.owner
+                    && r == self.pr_ref.repo
+                    && n == self.pr_ref.number
             }
             None => false,
         }
