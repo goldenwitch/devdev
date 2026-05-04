@@ -1420,6 +1420,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "pr-reviewer"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "clap",
+ "devdev-acp",
+ "devdev-cli",
+ "devdev-daemon",
+ "devdev-integrations",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "predicates"
 version = "3.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -10,6 +10,7 @@ members = [
     "crates/devdev-tui",
     "crates/devdev-scenarios",
     "crates/devdev-workspace",
+    "samples/pr-reviewer",
 ]
 
 [workspace.package]

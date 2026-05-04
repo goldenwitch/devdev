@@ -1,0 +1,20 @@
+[package]
+name = "pr-reviewer"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Sample: poll a GitHub repository for new/updated PRs and ask a Copilot ACP agent to review each one."
+
+[dependencies]
+devdev-acp = { path = "../../crates/devdev-acp" }
+devdev-cli = { path = "../../crates/devdev-cli" }
+devdev-daemon = { path = "../../crates/devdev-daemon" }
+devdev-integrations = { path = "../../crates/devdev-integrations" }
+
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+clap = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
