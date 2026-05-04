@@ -180,15 +180,22 @@ fn resolve_data_dir(explicit: Option<PathBuf>) -> PathBuf {
 ///
 /// Selection precedence: explicit `flag` > `DEVDEV_REPO_HOST_ADAPTER`
 /// env var > `DEVDEV_GITHUB_ADAPTER` (legacy alias) > `"live"`.
-/// `"live"` resolves to a github.com [`GitHubAdapter`] reading
-/// `GH_TOKEN`; if the token is missing we fall back to the
-/// host-agnostic [`MockAdapter`] so dev/test flows still progress.
+/// `"live"` resolves to a github.com [`GitHubAdapter`] using the
+/// `CredentialStore` snapshot (which already considered `GH_TOKEN`
+/// and the `gh` CLI); if no credential is available we fall back to
+/// the host-agnostic [`MockAdapter`] so dev/test flows still
+/// progress.
 ///
 /// Multi-host wiring (GHE, ADO) is configured per repo in
 /// preferences and resolved through the daemon-side host registry;
 /// this function only seeds the *default* adapter for the legacy
 /// single-host code paths that haven't migrated yet.
-fn select_github_adapter(flag: Option<&str>) -> Arc<dyn RepoHostAdapter> {
+fn select_github_adapter(
+    flag: Option<&str>,
+    credentials: &devdev_daemon::credentials::CredentialStore,
+) -> Arc<dyn RepoHostAdapter> {
+    use devdev_integrations::host::RepoHostId;
+
     let choice = flag
         .map(ToOwned::to_owned)
         .or_else(|| std::env::var("DEVDEV_REPO_HOST_ADAPTER").ok())
@@ -197,11 +204,13 @@ fn select_github_adapter(flag: Option<&str>) -> Arc<dyn RepoHostAdapter> {
 
     match choice.as_str() {
         "mock" => Arc::new(MockAdapter::new()),
-        _ => match GitHubAdapter::from_env() {
-            Ok(adapter) => Arc::new(adapter),
-            Err(e) => {
+        _ => match credentials.get(&RepoHostId::github_com()) {
+            Some(cred) => Arc::new(GitHubAdapter::github_com(
+                cred.token().expose().to_string(),
+            )),
+            None => {
                 eprintln!(
-                    "devdev: repo-host token not available ({e}); falling back to mock adapter"
+                    "devdev: no github.com credential available; falling back to mock adapter (set GH_TOKEN or run `gh auth login`)"
                 );
                 Arc::new(MockAdapter::new())
             }
@@ -327,7 +336,7 @@ pub async fn run_up(args: UpArgs) -> Result<()> {
         Some(mcp_endpoint),
     ));
     let router = Arc::new(SessionRouter::new(backend));
-    let github = select_github_adapter(args.github.as_deref());
+    let github = select_github_adapter(args.github.as_deref(), &credentials);
     // Multi-host registry. Today we only seed the github.com slot
     // from the default adapter; preferences-driven population (one
     // entry per `[[repo]]` block) lands as a follow-up.
