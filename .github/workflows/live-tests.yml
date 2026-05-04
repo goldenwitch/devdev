@@ -170,8 +170,13 @@ jobs:
                --skip cargo_builds_hello_world_inside_mount
 
   cleanup:
-    needs: live-tests
-    if: always()
+    # Depend on `provision` (not just `live-tests`) so we can gate on
+    # whether the manifest-lock artifact actually exists. If `gate`
+    # skips the workflow or `provision` fails before upload, there's
+    # nothing to reset and downloading a missing artifact would turn a
+    # clean skip/failure into a confusing secondary cleanup failure.
+    needs: [provision, live-tests]
+    if: ${{ always() && needs.provision.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: live-tests-admin
