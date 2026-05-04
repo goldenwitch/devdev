@@ -33,3 +33,4 @@ devdev-workspace = { path = "../devdev-workspace" }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 tracing-subscriber = { workspace = true }
+serial_test = { workspace = true }

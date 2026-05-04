@@ -13,7 +13,7 @@ use devdev_daemon::router::{
     AgentResponse, ResponseChunk, RouterError, SessionBackend, SessionRouter,
 };
 use devdev_daemon::{Daemon, DaemonConfig};
-use devdev_integrations::{MockGitHubAdapter, PrState, PrStatus, PullRequest};
+use devdev_integrations::{MockAdapter, PrState, PrStatus, PullRequest};
 use devdev_tasks::approval::{self, ApprovalPolicy};
 use devdev_tasks::events::{DaemonEvent, EventBus};
 use devdev_tasks::ledger::IdempotencyLedger;
@@ -97,8 +97,8 @@ fn test_pr(sha: &str) -> PullRequest {
     }
 }
 
-fn test_github(sha: &str) -> MockGitHubAdapter {
-    MockGitHubAdapter::new()
+fn test_github(sha: &str) -> MockAdapter {
+    MockAdapter::new()
         .with_pr("test-org", "test-repo", test_pr(sha))
         .with_diff(
             "test-org",
@@ -143,8 +143,12 @@ impl E2EHarness {
         let daemon = Daemon::start(config, false).await.unwrap();
 
         let gh = Arc::new(test_github("sha-initial-001"));
-        let github: Arc<dyn devdev_integrations::GitHubAdapter> =
-            Arc::clone(&gh) as Arc<dyn devdev_integrations::GitHubAdapter>;
+        let github: Arc<dyn devdev_integrations::RepoHostAdapter> =
+            Arc::clone(&gh) as Arc<dyn devdev_integrations::RepoHostAdapter>;
+        let host_registry = Arc::new(devdev_daemon::host_registry::RepoHostRegistry::single(
+            devdev_integrations::host::RepoHostId::github_com(),
+            Arc::clone(&github),
+        ));
 
         let backend = Arc::new(FakeAgentBackend::new());
         let backend_dyn: Arc<dyn SessionBackend> = backend.clone();
@@ -156,7 +160,7 @@ impl E2EHarness {
         let (gate, handle) = approval::approval_channel(policy, Duration::from_secs(30));
         let approval_gate = Arc::new(Mutex::new(gate));
         let approval_handle = Arc::new(Mutex::new(handle));
-        let agent_secrets = Arc::new(Mutex::new(devdev_daemon::secrets::AgentSecrets::default()));
+        let credentials = Arc::new(devdev_daemon::credentials::CredentialStore::empty());
 
         let bus = EventBus::new();
         let ledger: Arc<dyn IdempotencyLedger> =
@@ -169,12 +173,13 @@ impl E2EHarness {
                 Arc::clone(&router),
                 Arc::clone(&registry),
                 github,
+                host_registry,
                 approval_gate,
                 approval_handle,
                 bus.clone(),
                 ledger,
                 policy,
-                agent_secrets,
+                credentials,
                 shutdown_tx.clone(),
                 Arc::new(Mutex::new(devdev_workspace::Fs::new())),
             )
@@ -255,6 +260,7 @@ async fn pr_opened_event_drives_agent_prompt() {
     .await;
 
     harness.bus.publish(DaemonEvent::PrOpened {
+        host_id: devdev_integrations::host::RepoHostId::github_com(),
         owner: "test-org".into(),
         repo: "test-repo".into(),
         number: 1,
@@ -288,6 +294,7 @@ async fn pr_closed_event_completes_task() {
     .await;
 
     harness.bus.publish(DaemonEvent::PrClosed {
+        host_id: devdev_integrations::host::RepoHostId::github_com(),
         owner: "test-org".into(),
         repo: "test-repo".into(),
         number: 1,
@@ -318,6 +325,7 @@ async fn pr_updated_event_reprompts_agent() {
     .await;
 
     harness.bus.publish(DaemonEvent::PrOpened {
+        host_id: devdev_integrations::host::RepoHostId::github_com(),
         owner: "test-org".into(),
         repo: "test-repo".into(),
         number: 1,
@@ -326,6 +334,7 @@ async fn pr_updated_event_reprompts_agent() {
     harness.advance_polls(1).await;
 
     harness.bus.publish(DaemonEvent::PrUpdated {
+        host_id: devdev_integrations::host::RepoHostId::github_com(),
         owner: "test-org".into(),
         repo: "test-repo".into(),
         number: 1,
@@ -353,6 +362,7 @@ async fn unrelated_pr_event_is_ignored() {
 
     // Different number.
     harness.bus.publish(DaemonEvent::PrOpened {
+        host_id: devdev_integrations::host::RepoHostId::github_com(),
         owner: "test-org".into(),
         repo: "test-repo".into(),
         number: 2,

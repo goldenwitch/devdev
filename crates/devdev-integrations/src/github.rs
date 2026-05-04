@@ -1,36 +1,59 @@
-//! Live GitHub adapter using reqwest.
+//! Live GitHub REST adapter.
+//!
+//! Covers both **GitHub.com** (`https://api.github.com`) and any
+//! **GitHub Enterprise Server** instance (`https://<ghe-host>/api/v3`).
+//! The two speak the same wire protocol; only the API base URL
+//! differs. Construct via [`GitHubAdapter::new`] with an explicit
+//! [`RepoHostId`], or via [`GitHubAdapter::github_com`] for the
+//! common github.com case.
 
 use async_trait::async_trait;
 use reqwest::header::{ACCEPT, AUTHORIZATION, USER_AGENT};
 use std::env;
 
-use crate::GitHubAdapter;
+use crate::RepoHostAdapter;
+use crate::host::RepoHostId;
 use crate::rate_limit::RateLimitTracker;
 use crate::types::*;
 
-const API_BASE: &str = "https://api.github.com";
-
-/// Real GitHub API client.
-pub struct LiveGitHubAdapter {
+/// Real GitHub REST API client.
+///
+/// Holds an [`RepoHostId`] (so the daemon registry can key on it),
+/// the API base URL, the bearer token, and a rate-limit tracker.
+pub struct GitHubAdapter {
+    host_id: RepoHostId,
     client: reqwest::Client,
     token: String,
     rate_limit: RateLimitTracker,
 }
 
-impl LiveGitHubAdapter {
-    /// Create a new adapter, reading the token from `GH_TOKEN`.
-    pub fn from_env() -> Result<Self, GitHubError> {
-        let token = env::var("GH_TOKEN").map_err(|_| GitHubError::TokenNotSet)?;
-        Ok(Self {
-            client: reqwest::Client::new(),
-            token,
-            rate_limit: RateLimitTracker::new(),
-        })
+impl GitHubAdapter {
+    /// Build a github.com adapter, reading the token from `GH_TOKEN`.
+    ///
+    /// Equivalent to `Self::new(RepoHostId::github_com(), token)` with
+    /// the env-var lookup folded in. Provided for migration ease;
+    /// production daemons should resolve credentials through the
+    /// `devdev-daemon` `CredentialStore` and call [`Self::new`].
+    pub fn from_env() -> Result<Self, RepoHostError> {
+        let token = env::var("GH_TOKEN").map_err(|_| RepoHostError::TokenNotSet)?;
+        Ok(Self::new(RepoHostId::github_com(), token))
     }
 
-    /// Create a new adapter with an explicit token.
-    pub fn with_token(token: String) -> Self {
+    /// Build a github.com adapter with an explicit token.
+    pub fn github_com(token: String) -> Self {
+        Self::new(RepoHostId::github_com(), token)
+    }
+
+    /// Build an adapter for a GitHub Enterprise Server install at
+    /// `host` (e.g. `ghe.example.com`).
+    pub fn ghe(host: impl Into<String>, token: String) -> Self {
+        Self::new(RepoHostId::ghe(host), token)
+    }
+
+    /// Construct directly from a host id and token.
+    pub fn new(host_id: RepoHostId, token: String) -> Self {
         Self {
+            host_id,
             client: reqwest::Client::new(),
             token,
             rate_limit: RateLimitTracker::new(),
@@ -42,8 +65,15 @@ impl LiveGitHubAdapter {
         &self.rate_limit
     }
 
+    fn api_base(&self) -> &str {
+        &self.host_id.api_base
+    }
+
     /// Send a GET request and handle common errors.
-    async fn get_json<T: serde::de::DeserializeOwned>(&self, url: &str) -> Result<T, GitHubError> {
+    async fn get_json<T: serde::de::DeserializeOwned>(
+        &self,
+        url: &str,
+    ) -> Result<T, RepoHostError> {
         let resp = self
             .client
             .get(url)
@@ -57,11 +87,12 @@ impl LiveGitHubAdapter {
         self.check_status(&resp)?;
 
         let text = resp.text().await?;
-        serde_json::from_str(&text).map_err(|e| GitHubError::Deserialize(format!("{e}: {text}")))
+        serde_json::from_str(&text)
+            .map_err(|e| RepoHostError::Deserialize(format!("{e}: {text}")))
     }
 
     /// Send a GET and return raw text (for diffs).
-    async fn get_text(&self, url: &str, accept: &str) -> Result<String, GitHubError> {
+    async fn get_text(&self, url: &str, accept: &str) -> Result<String, RepoHostError> {
         let resp = self
             .client
             .get(url)
@@ -78,7 +109,11 @@ impl LiveGitHubAdapter {
     }
 
     /// Send a POST with JSON body.
-    async fn post_json(&self, url: &str, body: &serde_json::Value) -> Result<(), GitHubError> {
+    async fn post_json(
+        &self,
+        url: &str,
+        body: &serde_json::Value,
+    ) -> Result<(), RepoHostError> {
         let resp = self
             .client
             .post(url)
@@ -111,12 +146,12 @@ impl LiveGitHubAdapter {
         self.rate_limit.update(remaining, reset);
     }
 
-    fn check_status(&self, resp: &reqwest::Response) -> Result<(), GitHubError> {
+    fn check_status(&self, resp: &reqwest::Response) -> Result<(), RepoHostError> {
         let status = resp.status().as_u16();
         match status {
             200..=299 => Ok(()),
-            401 => Err(GitHubError::Unauthorized),
-            404 => Err(GitHubError::NotFound(resp.url().to_string())),
+            401 => Err(RepoHostError::Unauthorized),
+            404 => Err(RepoHostError::NotFound(resp.url().to_string())),
             429 => {
                 let retry_after = resp
                     .headers()
@@ -124,9 +159,9 @@ impl LiveGitHubAdapter {
                     .and_then(|v| v.to_str().ok())
                     .and_then(|v| v.parse().ok())
                     .unwrap_or(60);
-                Err(GitHubError::RateLimited { retry_after })
+                Err(RepoHostError::RateLimited { retry_after })
             }
-            _ => Err(GitHubError::ServerError {
+            _ => Err(RepoHostError::ServerError {
                 status,
                 body: String::new(),
             }),
@@ -134,8 +169,8 @@ impl LiveGitHubAdapter {
     }
 }
 
-/// Parse the GitHub API PR JSON response into our `PullRequest` type.
-fn parse_pr(value: serde_json::Value) -> Result<PullRequest, GitHubError> {
+/// Parse a PR JSON response into [`PullRequest`].
+fn parse_pr(value: serde_json::Value) -> Result<PullRequest, RepoHostError> {
     let merged = value
         .get("merged")
         .and_then(|v| v.as_bool())
@@ -179,14 +214,18 @@ fn parse_comment(value: &serde_json::Value) -> Comment {
 }
 
 #[async_trait]
-impl GitHubAdapter for LiveGitHubAdapter {
+impl RepoHostAdapter for GitHubAdapter {
+    fn host_id(&self) -> &RepoHostId {
+        &self.host_id
+    }
+
     async fn get_pr(
         &self,
         owner: &str,
         repo: &str,
         number: u64,
-    ) -> Result<PullRequest, GitHubError> {
-        let url = format!("{API_BASE}/repos/{owner}/{repo}/pulls/{number}");
+    ) -> Result<PullRequest, RepoHostError> {
+        let url = format!("{}/repos/{owner}/{repo}/pulls/{number}", self.api_base());
         let value: serde_json::Value = self.get_json(&url).await?;
         parse_pr(value)
     }
@@ -196,8 +235,8 @@ impl GitHubAdapter for LiveGitHubAdapter {
         owner: &str,
         repo: &str,
         number: u64,
-    ) -> Result<String, GitHubError> {
-        let url = format!("{API_BASE}/repos/{owner}/{repo}/pulls/{number}");
+    ) -> Result<String, RepoHostError> {
+        let url = format!("{}/repos/{owner}/{repo}/pulls/{number}", self.api_base());
         self.get_text(&url, "application/vnd.github.v3.diff").await
     }
 
@@ -206,20 +245,21 @@ impl GitHubAdapter for LiveGitHubAdapter {
         owner: &str,
         repo: &str,
         number: u64,
-    ) -> Result<Vec<Comment>, GitHubError> {
+    ) -> Result<Vec<Comment>, RepoHostError> {
         let mut all_comments = Vec::new();
         let mut page = 1u32;
         let max_pages = 10;
 
         loop {
             let url = format!(
-                "{API_BASE}/repos/{owner}/{repo}/pulls/{number}/comments?per_page=100&page={page}"
+                "{}/repos/{owner}/{repo}/pulls/{number}/comments?per_page=100&page={page}",
+                self.api_base()
             );
             let value: serde_json::Value = self.get_json(&url).await?;
 
             let arr = value
                 .as_array()
-                .ok_or_else(|| GitHubError::Deserialize("expected array".into()))?;
+                .ok_or_else(|| RepoHostError::Deserialize("expected array".into()))?;
 
             if arr.is_empty() {
                 break;
@@ -244,8 +284,11 @@ impl GitHubAdapter for LiveGitHubAdapter {
         repo: &str,
         number: u64,
         review: Review,
-    ) -> Result<(), GitHubError> {
-        let url = format!("{API_BASE}/repos/{owner}/{repo}/pulls/{number}/reviews");
+    ) -> Result<(), RepoHostError> {
+        let url = format!(
+            "{}/repos/{owner}/{repo}/pulls/{number}/reviews",
+            self.api_base()
+        );
 
         let event = match review.event {
             ReviewEvent::Approve => "APPROVE",
@@ -280,8 +323,11 @@ impl GitHubAdapter for LiveGitHubAdapter {
         repo: &str,
         number: u64,
         body: &str,
-    ) -> Result<(), GitHubError> {
-        let url = format!("{API_BASE}/repos/{owner}/{repo}/issues/{number}/comments");
+    ) -> Result<(), RepoHostError> {
+        let url = format!(
+            "{}/repos/{owner}/{repo}/issues/{number}/comments",
+            self.api_base()
+        );
         let payload = serde_json::json!({ "body": body });
         self.post_json(&url, &payload).await
     }
@@ -291,15 +337,18 @@ impl GitHubAdapter for LiveGitHubAdapter {
         owner: &str,
         repo: &str,
         number: u64,
-    ) -> Result<PrStatus, GitHubError> {
+    ) -> Result<PrStatus, RepoHostError> {
         // Get PR for mergeable status
-        let pr_url = format!("{API_BASE}/repos/{owner}/{repo}/pulls/{number}");
+        let pr_url = format!("{}/repos/{owner}/{repo}/pulls/{number}", self.api_base());
         let pr_value: serde_json::Value = self.get_json(&pr_url).await?;
         let mergeable = pr_value["mergeable"].as_bool();
 
         // Get check runs for the head SHA
         let head_sha = pr_value["head"]["sha"].as_str().unwrap_or("");
-        let checks_url = format!("{API_BASE}/repos/{owner}/{repo}/commits/{head_sha}/check-runs");
+        let checks_url = format!(
+            "{}/repos/{owner}/{repo}/commits/{head_sha}/check-runs",
+            self.api_base()
+        );
         let checks_value: serde_json::Value = self.get_json(&checks_url).await?;
 
         let checks = checks_value["check_runs"]
@@ -321,8 +370,8 @@ impl GitHubAdapter for LiveGitHubAdapter {
         owner: &str,
         repo: &str,
         number: u64,
-    ) -> Result<String, GitHubError> {
-        let url = format!("{API_BASE}/repos/{owner}/{repo}/pulls/{number}");
+    ) -> Result<String, RepoHostError> {
+        let url = format!("{}/repos/{owner}/{repo}/pulls/{number}", self.api_base());
         let value: serde_json::Value = self.get_json(&url).await?;
         Ok(value["head"]["sha"].as_str().unwrap_or("").to_string())
     }
@@ -331,18 +380,19 @@ impl GitHubAdapter for LiveGitHubAdapter {
         &self,
         owner: &str,
         repo: &str,
-    ) -> Result<Vec<PullRequest>, GitHubError> {
+    ) -> Result<Vec<PullRequest>, RepoHostError> {
         let mut all = Vec::new();
         let mut page = 1u32;
         let max_pages = 10u32;
         loop {
             let url = format!(
-                "{API_BASE}/repos/{owner}/{repo}/pulls?state=open&per_page=100&page={page}"
+                "{}/repos/{owner}/{repo}/pulls?state=open&per_page=100&page={page}",
+                self.api_base()
             );
             let value: serde_json::Value = self.get_json(&url).await?;
             let arr = value
                 .as_array()
-                .ok_or_else(|| GitHubError::Deserialize("expected array".into()))?;
+                .ok_or_else(|| RepoHostError::Deserialize("expected array".into()))?;
             if arr.is_empty() {
                 break;
             }
@@ -355,5 +405,24 @@ impl GitHubAdapter for LiveGitHubAdapter {
             }
         }
         Ok(all)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn github_com_constructor_uses_dotcom_base() {
+        let a = GitHubAdapter::github_com("tok".into());
+        assert_eq!(a.host_id().host, "github.com");
+        assert_eq!(a.api_base(), "https://api.github.com");
+    }
+
+    #[test]
+    fn ghe_constructor_uses_v3_path() {
+        let a = GitHubAdapter::ghe("ghe.example.com", "tok".into());
+        assert_eq!(a.host_id().host, "ghe.example.com");
+        assert_eq!(a.api_base(), "https://ghe.example.com/api/v3");
     }
 }

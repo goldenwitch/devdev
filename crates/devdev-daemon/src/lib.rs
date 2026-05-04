@@ -5,14 +5,15 @@
 //! to it over IPC.
 
 pub mod checkpoint;
+pub mod credentials;
 pub mod dispatch;
+pub mod host_registry;
 pub mod ipc;
 pub mod ledger;
 pub mod mcp;
 pub mod pid;
 pub mod router;
 pub mod runner;
-pub mod secrets;
 pub mod server;
 
 use std::path::PathBuf;

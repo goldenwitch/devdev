@@ -1,19 +1,26 @@
-//! Mock GitHub adapter for testing.
+//! In-memory test double for [`crate::RepoHostAdapter`].
+//!
+//! Host-agnostic: the same mock serves GitHub and Azure DevOps tests.
+//! Construct with [`MockAdapter::new`] for a default github.com host
+//! id, or [`MockAdapter::with_host`] to simulate any forge instance.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 
-use crate::GitHubAdapter;
+use crate::RepoHostAdapter;
+use crate::host::RepoHostId;
 use crate::types::*;
 
 type PrKey = (String, String, u64);
 type PostedReview = (String, String, u64, Review);
 type PostedComment = (String, String, u64, String);
 
-/// Test double that returns canned responses and records outgoing calls.
-pub struct MockGitHubAdapter {
+/// In-memory double that returns canned responses and records
+/// outgoing calls. Default host id is [`RepoHostId::github_com`].
+pub struct MockAdapter {
+    host_id: RepoHostId,
     prs: HashMap<PrKey, PullRequest>,
     diffs: HashMap<PrKey, String>,
     comments: HashMap<PrKey, Vec<Comment>>,
@@ -24,9 +31,14 @@ pub struct MockGitHubAdapter {
     sha_overrides: Arc<Mutex<HashMap<PrKey, String>>>,
 }
 
-impl MockGitHubAdapter {
+impl MockAdapter {
     pub fn new() -> Self {
+        Self::with_host(RepoHostId::github_com())
+    }
+
+    pub fn with_host(host_id: RepoHostId) -> Self {
         Self {
+            host_id,
             prs: HashMap::new(),
             diffs: HashMap::new(),
             comments: HashMap::new(),
@@ -90,7 +102,7 @@ impl MockGitHubAdapter {
     }
 }
 
-impl Default for MockGitHubAdapter {
+impl Default for MockAdapter {
     fn default() -> Self {
         Self::new()
     }
@@ -101,20 +113,23 @@ fn key(owner: &str, repo: &str, number: u64) -> PrKey {
 }
 
 #[async_trait]
-impl GitHubAdapter for MockGitHubAdapter {
+impl RepoHostAdapter for MockAdapter {
+    fn host_id(&self) -> &RepoHostId {
+        &self.host_id
+    }
+
     async fn get_pr(
         &self,
         owner: &str,
         repo: &str,
         number: u64,
-    ) -> Result<PullRequest, GitHubError> {
+    ) -> Result<PullRequest, RepoHostError> {
         let mut pr = self
             .prs
             .get(&key(owner, repo, number))
             .cloned()
-            .ok_or_else(|| GitHubError::NotFound(format!("{owner}/{repo}#{number}")))?;
+            .ok_or_else(|| RepoHostError::NotFound(format!("{owner}/{repo}#{number}")))?;
 
-        // Apply SHA override if present.
         if let Some(sha) = self
             .sha_overrides
             .lock()
@@ -132,11 +147,11 @@ impl GitHubAdapter for MockGitHubAdapter {
         owner: &str,
         repo: &str,
         number: u64,
-    ) -> Result<String, GitHubError> {
+    ) -> Result<String, RepoHostError> {
         self.diffs
             .get(&key(owner, repo, number))
             .cloned()
-            .ok_or_else(|| GitHubError::NotFound(format!("{owner}/{repo}#{number}")))
+            .ok_or_else(|| RepoHostError::NotFound(format!("{owner}/{repo}#{number}")))
     }
 
     async fn list_pr_comments(
@@ -144,7 +159,7 @@ impl GitHubAdapter for MockGitHubAdapter {
         owner: &str,
         repo: &str,
         number: u64,
-    ) -> Result<Vec<Comment>, GitHubError> {
+    ) -> Result<Vec<Comment>, RepoHostError> {
         Ok(self
             .comments
             .get(&key(owner, repo, number))
@@ -158,7 +173,7 @@ impl GitHubAdapter for MockGitHubAdapter {
         repo: &str,
         number: u64,
         review: Review,
-    ) -> Result<(), GitHubError> {
+    ) -> Result<(), RepoHostError> {
         self.posted_reviews
             .lock()
             .unwrap()
@@ -172,7 +187,7 @@ impl GitHubAdapter for MockGitHubAdapter {
         repo: &str,
         number: u64,
         body: &str,
-    ) -> Result<(), GitHubError> {
+    ) -> Result<(), RepoHostError> {
         self.posted_comments
             .lock()
             .unwrap()
@@ -185,11 +200,11 @@ impl GitHubAdapter for MockGitHubAdapter {
         owner: &str,
         repo: &str,
         number: u64,
-    ) -> Result<PrStatus, GitHubError> {
+    ) -> Result<PrStatus, RepoHostError> {
         self.statuses
             .get(&key(owner, repo, number))
             .cloned()
-            .ok_or_else(|| GitHubError::NotFound(format!("{owner}/{repo}#{number}")))
+            .ok_or_else(|| RepoHostError::NotFound(format!("{owner}/{repo}#{number}")))
     }
 
     async fn get_pr_head_sha(
@@ -197,8 +212,7 @@ impl GitHubAdapter for MockGitHubAdapter {
         owner: &str,
         repo: &str,
         number: u64,
-    ) -> Result<String, GitHubError> {
-        // Check override first.
+    ) -> Result<String, RepoHostError> {
         if let Some(sha) = self
             .sha_overrides
             .lock()
@@ -210,14 +224,14 @@ impl GitHubAdapter for MockGitHubAdapter {
         self.prs
             .get(&key(owner, repo, number))
             .map(|pr| pr.head_sha.clone())
-            .ok_or_else(|| GitHubError::NotFound(format!("{owner}/{repo}#{number}")))
+            .ok_or_else(|| RepoHostError::NotFound(format!("{owner}/{repo}#{number}")))
     }
 
     async fn list_open_prs(
         &self,
         owner: &str,
         repo: &str,
-    ) -> Result<Vec<PullRequest>, GitHubError> {
+    ) -> Result<Vec<PullRequest>, RepoHostError> {
         let overrides = self.sha_overrides.lock().unwrap().clone();
         let mut out = Vec::new();
         for ((o, r, n), pr) in &self.prs {
@@ -229,7 +243,6 @@ impl GitHubAdapter for MockGitHubAdapter {
                 out.push(pr);
             }
         }
-        out.sort_by_key(|p| p.number);
         Ok(out)
     }
 }

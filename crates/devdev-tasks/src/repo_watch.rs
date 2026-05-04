@@ -2,7 +2,7 @@
 //!
 //! The polling counterpart to a webhook receiver. Each tick:
 //!
-//! 1. List open PRs via the [`GitHubAdapter`].
+//! 1. List open PRs via the [`RepoHostAdapter`].
 //! 2. For each PR, compute a state hash (head_sha + updated_at) and
 //!    consult the [`IdempotencyLedger`]. If we've seen this exact
 //!    state, skip — we already published the corresponding event.
@@ -20,18 +20,19 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use devdev_integrations::{GitHubAdapter, pr_state_hash};
+use devdev_integrations::host::RepoHostId;
+use devdev_integrations::{RepoHostAdapter, pr_state_hash};
 
 use crate::events::{DaemonEvent, EventBus};
 use crate::ledger::{IdempotencyLedger, LedgerKey};
 use crate::task::{Task, TaskError, TaskMessage, TaskStatus};
 
-const ADAPTER: &str = "github";
 const RESOURCE_TYPE: &str = "pr_state";
 
 /// A task that polls a single repo's open PRs and emits events.
 pub struct RepoWatchTask {
     id: String,
+    host_id: RepoHostId,
     owner: String,
     repo: String,
     /// `pr_number → state_hash` for the most recent poll.
@@ -40,7 +41,7 @@ pub struct RepoWatchTask {
     /// When `poll()` last actually ran. `None` until the first run.
     last_polled: Option<Instant>,
     status: TaskStatus,
-    github: Arc<dyn GitHubAdapter>,
+    github: Arc<dyn RepoHostAdapter>,
     ledger: Arc<dyn IdempotencyLedger>,
     bus: EventBus,
 }
@@ -48,14 +49,16 @@ pub struct RepoWatchTask {
 impl RepoWatchTask {
     pub fn new(
         id: String,
+        host_id: RepoHostId,
         owner: impl Into<String>,
         repo: impl Into<String>,
-        github: Arc<dyn GitHubAdapter>,
+        github: Arc<dyn RepoHostAdapter>,
         ledger: Arc<dyn IdempotencyLedger>,
         bus: EventBus,
     ) -> Self {
         Self {
             id,
+            host_id,
             owner: owner.into(),
             repo: repo.into(),
             last_seen: HashMap::new(),
@@ -71,6 +74,10 @@ impl RepoWatchTask {
     pub fn with_interval(mut self, interval: Duration) -> Self {
         self.poll_interval = interval;
         self
+    }
+
+    pub fn host_id(&self) -> &RepoHostId {
+        &self.host_id
     }
 
     pub fn owner(&self) -> &str {
@@ -99,7 +106,12 @@ impl RepoWatchTask {
             let hash = pr_state_hash(pr);
             current.insert(pr.number, hash.clone());
 
-            let key = LedgerKey::new(ADAPTER, RESOURCE_TYPE, self.resource_id(pr.number), &hash);
+            let key = LedgerKey::new(
+                self.host_id.ledger_key(),
+                RESOURCE_TYPE,
+                self.resource_id(pr.number),
+                &hash,
+            );
 
             // Two independent questions:
             //   1. Have we already published this exact state hash?
@@ -125,6 +137,7 @@ impl RepoWatchTask {
 
             let event = if first_in_session {
                 DaemonEvent::PrOpened {
+                    host_id: self.host_id.clone(),
                     owner: self.owner.clone(),
                     repo: self.repo.clone(),
                     number: pr.number,
@@ -132,6 +145,7 @@ impl RepoWatchTask {
                 }
             } else {
                 DaemonEvent::PrUpdated {
+                    host_id: self.host_id.clone(),
                     owner: self.owner.clone(),
                     repo: self.repo.clone(),
                     number: pr.number,
@@ -171,6 +185,7 @@ impl RepoWatchTask {
                 // (mergeable=false) and let MonitorPrTask resolve via
                 // its own get_pr_status if it cares.
                 let event = DaemonEvent::PrClosed {
+                    host_id: self.host_id.clone(),
                     owner: self.owner.clone(),
                     repo: self.repo.clone(),
                     number: *number,
@@ -197,7 +212,12 @@ impl Task for RepoWatchTask {
     }
 
     fn describe(&self) -> String {
-        format!("Watching {}/{} for PR events", self.owner, self.repo)
+        format!(
+            "Watching {}/{} for PR events ({})",
+            self.owner,
+            self.repo,
+            self.host_id.ledger_key()
+        )
     }
 
     fn status(&self) -> &TaskStatus {
@@ -226,6 +246,7 @@ impl Task for RepoWatchTask {
     fn serialize(&self) -> Result<serde_json::Value, TaskError> {
         Ok(serde_json::json!({
             "id": self.id,
+            "host": self.host_id.ledger_key(),
             "owner": self.owner,
             "repo": self.repo,
             "last_seen": self.last_seen,
@@ -245,7 +266,7 @@ impl Task for RepoWatchTask {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use devdev_integrations::{MockGitHubAdapter, PrState, PullRequest};
+    use devdev_integrations::{MockAdapter, PrState, PullRequest};
 
     /// In-memory test ledger.
     #[derive(Default)]
@@ -287,18 +308,19 @@ mod tests {
 
     fn task() -> (
         RepoWatchTask,
-        Arc<MockGitHubAdapter>,
+        Arc<MockAdapter>,
         Arc<MemLedger>,
         EventBus,
     ) {
-        let gh = Arc::new(MockGitHubAdapter::new());
+        let gh = Arc::new(MockAdapter::new());
         let ledger = Arc::new(MemLedger::default());
         let bus = EventBus::new();
         let t = RepoWatchTask::new(
             "t-1".into(),
+            RepoHostId::github_com(),
             "o",
             "r",
-            gh.clone() as Arc<dyn GitHubAdapter>,
+            gh.clone() as Arc<dyn RepoHostAdapter>,
             ledger.clone() as Arc<dyn IdempotencyLedger>,
             bus.clone(),
         )
@@ -319,15 +341,16 @@ mod tests {
 
     #[tokio::test]
     async fn first_pr_emits_opened() {
-        let gh = Arc::new(MockGitHubAdapter::new().with_pr("o", "r", pr(1, "sha1", "t1")));
+        let gh = Arc::new(MockAdapter::new().with_pr("o", "r", pr(1, "sha1", "t1")));
         let ledger = Arc::new(MemLedger::default());
         let bus = EventBus::new();
         let mut rx = bus.subscribe();
         let mut t = RepoWatchTask::new(
             "t-1".into(),
+            RepoHostId::github_com(),
             "o",
             "r",
-            gh as Arc<dyn GitHubAdapter>,
+            gh as Arc<dyn RepoHostAdapter>,
             ledger as Arc<dyn IdempotencyLedger>,
             bus,
         )
@@ -339,15 +362,16 @@ mod tests {
 
     #[tokio::test]
     async fn second_poll_no_change_emits_nothing() {
-        let gh = Arc::new(MockGitHubAdapter::new().with_pr("o", "r", pr(1, "sha1", "t1")));
+        let gh = Arc::new(MockAdapter::new().with_pr("o", "r", pr(1, "sha1", "t1")));
         let ledger = Arc::new(MemLedger::default());
         let bus = EventBus::new();
         let mut rx = bus.subscribe();
         let mut t = RepoWatchTask::new(
             "t-1".into(),
+            RepoHostId::github_com(),
             "o",
             "r",
-            gh as Arc<dyn GitHubAdapter>,
+            gh as Arc<dyn RepoHostAdapter>,
             ledger as Arc<dyn IdempotencyLedger>,
             bus,
         )
@@ -361,15 +385,16 @@ mod tests {
 
     #[tokio::test]
     async fn updated_pr_emits_pr_updated() {
-        let gh = Arc::new(MockGitHubAdapter::new().with_pr("o", "r", pr(1, "sha1", "t1")));
+        let gh = Arc::new(MockAdapter::new().with_pr("o", "r", pr(1, "sha1", "t1")));
         let ledger = Arc::new(MemLedger::default());
         let bus = EventBus::new();
         let mut rx = bus.subscribe();
         let mut t = RepoWatchTask::new(
             "t-1".into(),
+            RepoHostId::github_com(),
             "o",
             "r",
-            gh.clone() as Arc<dyn GitHubAdapter>,
+            gh.clone() as Arc<dyn RepoHostAdapter>,
             ledger as Arc<dyn IdempotencyLedger>,
             bus,
         )
@@ -386,15 +411,16 @@ mod tests {
     #[tokio::test]
     async fn closed_pr_emits_pr_closed() {
         // Two adapters: one with PR open, one without.
-        let gh_open = Arc::new(MockGitHubAdapter::new().with_pr("o", "r", pr(1, "sha1", "t1")));
+        let gh_open = Arc::new(MockAdapter::new().with_pr("o", "r", pr(1, "sha1", "t1")));
         let ledger = Arc::new(MemLedger::default());
         let bus = EventBus::new();
         let mut rx = bus.subscribe();
         let mut t = RepoWatchTask::new(
             "t-1".into(),
+            RepoHostId::github_com(),
             "o",
             "r",
-            gh_open as Arc<dyn GitHubAdapter>,
+            gh_open as Arc<dyn RepoHostAdapter>,
             ledger.clone() as Arc<dyn IdempotencyLedger>,
             bus.clone(),
         )
@@ -403,7 +429,7 @@ mod tests {
         let _ = rx.recv().await.unwrap();
 
         // Replace adapter with empty one (PR disappeared).
-        let gh_empty = Arc::new(MockGitHubAdapter::new());
+        let gh_empty = Arc::new(MockAdapter::new());
         t.github = gh_empty;
         t.poll().await.unwrap();
         let evt = rx.recv().await.unwrap();
@@ -412,7 +438,7 @@ mod tests {
 
     #[tokio::test]
     async fn ledger_dedups_across_restart() {
-        let gh = Arc::new(MockGitHubAdapter::new().with_pr("o", "r", pr(1, "sha1", "t1")));
+        let gh = Arc::new(MockAdapter::new().with_pr("o", "r", pr(1, "sha1", "t1")));
         let ledger = Arc::new(MemLedger::default());
         let bus = EventBus::new();
         let mut rx = bus.subscribe();
@@ -420,9 +446,10 @@ mod tests {
         // First task instance: emits PrOpened, records ledger.
         let mut t1 = RepoWatchTask::new(
             "t-1".into(),
+            RepoHostId::github_com(),
             "o",
             "r",
-            gh.clone() as Arc<dyn GitHubAdapter>,
+            gh.clone() as Arc<dyn RepoHostAdapter>,
             ledger.clone() as Arc<dyn IdempotencyLedger>,
             bus.clone(),
         )
@@ -437,9 +464,10 @@ mod tests {
         // even though the ledger already has the state hash.
         let mut t2 = RepoWatchTask::new(
             "t-1".into(),
+            RepoHostId::github_com(),
             "o",
             "r",
-            gh.clone() as Arc<dyn GitHubAdapter>,
+            gh.clone() as Arc<dyn RepoHostAdapter>,
             ledger.clone() as Arc<dyn IdempotencyLedger>,
             bus,
         )

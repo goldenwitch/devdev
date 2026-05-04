@@ -35,7 +35,7 @@ use devdev_daemon::ledger::NdjsonLedger;
 use devdev_daemon::mcp::{DaemonToolProvider, McpServer};
 use devdev_daemon::router::SessionRouter;
 use devdev_daemon::{Daemon, DaemonConfig, DaemonError, server};
-use devdev_integrations::{GitHubAdapter, LiveGitHubAdapter, MockGitHubAdapter};
+use devdev_integrations::{GitHubAdapter, MockAdapter, RepoHostAdapter};
 use devdev_tasks::approval::{ApprovalPolicy, approval_channel};
 use devdev_tasks::events::EventBus;
 use devdev_tasks::registry::TaskRegistry;
@@ -176,21 +176,43 @@ fn resolve_data_dir(explicit: Option<PathBuf>) -> PathBuf {
     explicit.unwrap_or_else(DaemonConfig::default_data_dir)
 }
 
-fn select_github_adapter(flag: Option<&str>) -> Arc<dyn GitHubAdapter> {
+/// Build the default repo-host adapter from environment.
+///
+/// Selection precedence: explicit `flag` > `DEVDEV_REPO_HOST_ADAPTER`
+/// env var > `DEVDEV_GITHUB_ADAPTER` (legacy alias) > `"live"`.
+/// `"live"` resolves to a github.com [`GitHubAdapter`] using the
+/// `CredentialStore` snapshot (which already considered `GH_TOKEN`
+/// and the `gh` CLI); if no credential is available we fall back to
+/// the host-agnostic [`MockAdapter`] so dev/test flows still
+/// progress.
+///
+/// Multi-host wiring (GHE, ADO) is configured per repo in
+/// preferences and resolved through the daemon-side host registry;
+/// this function only seeds the *default* adapter for the legacy
+/// single-host code paths that haven't migrated yet.
+fn select_github_adapter(
+    flag: Option<&str>,
+    credentials: &devdev_daemon::credentials::CredentialStore,
+) -> Arc<dyn RepoHostAdapter> {
+    use devdev_integrations::host::RepoHostId;
+
     let choice = flag
         .map(ToOwned::to_owned)
+        .or_else(|| std::env::var("DEVDEV_REPO_HOST_ADAPTER").ok())
         .or_else(|| std::env::var("DEVDEV_GITHUB_ADAPTER").ok())
         .unwrap_or_else(|| "live".to_string());
 
     match choice.as_str() {
-        "mock" => Arc::new(MockGitHubAdapter::new()),
-        _ => match LiveGitHubAdapter::from_env() {
-            Ok(adapter) => Arc::new(adapter),
-            Err(e) => {
+        "mock" => Arc::new(MockAdapter::new()),
+        _ => match credentials.get(&RepoHostId::github_com()) {
+            Some(cred) => Arc::new(GitHubAdapter::github_com(
+                cred.token().expose().to_string(),
+            )),
+            None => {
                 eprintln!(
-                    "devdev: GH_TOKEN not available ({e}); falling back to mock GitHub adapter"
+                    "devdev: no github.com credential available; falling back to mock adapter (set GH_TOKEN or run `gh auth login`)"
                 );
-                Arc::new(MockGitHubAdapter::new())
+                Arc::new(MockAdapter::new())
             }
         },
     }
@@ -260,31 +282,47 @@ pub async fn run_up(args: UpArgs) -> Result<()> {
     // and a user-driven `fs/read` IPC call observe the same bytes.
     let fs = Arc::clone(&daemon.fs);
 
-    // Build the shared approval channel + secrets slot up-front so
-    // both the MCP provider (sender side, via `devdev_ask`) and the
-    // dispatch IPC (receiver side, via `approval_response`) can hold
-    // halves.
+    // Build the shared approval channel + credential snapshot up-
+    // front so both the MCP provider (sender side, via `devdev_ask`)
+    // and the dispatch IPC (receiver side, via `approval_response`)
+    // can hold halves.
     let policy = ApprovalPolicy::AutoApprove;
     let (gate, handle) = approval_channel(policy, APPROVAL_TIMEOUT);
     let approval_gate = Arc::new(Mutex::new(gate));
     let approval_handle = Arc::new(Mutex::new(handle));
-    let agent_secrets = Arc::new(Mutex::new(devdev_daemon::secrets::AgentSecrets::default()));
 
-    // Best-effort `gh auth token` sample — non-fatal if absent.
-    match devdev_daemon::secrets::try_read_gh_token().await {
-        Ok(Some(token)) => {
-            agent_secrets.lock().await.set_gh_token(Some(token));
-            eprintln!("DevDev: gh token sampled (devdev_ask will hand it out on approval)");
+    // Sample credentials exactly once. After this point the store is
+    // immutable; mutating env vars or `gh auth login`-ing will not
+    // affect tokens served from the snapshot until the daemon
+    // restarts.
+    let credentials = {
+        use devdev_daemon::credentials::{
+            CredentialProvider, CredentialStore, EnvVarProvider, GhCliProvider,
+        };
+        use devdev_integrations::host::RepoHostId;
+
+        let github = RepoHostId::github_com();
+        // Env var first (deterministic, scriptable), then `gh` CLI.
+        let providers: Vec<Arc<dyn CredentialProvider>> = vec![
+            Arc::new(EnvVarProvider::new(github.clone(), "GH_TOKEN")),
+            Arc::new(GhCliProvider::new(github.clone())),
+        ];
+        let store = CredentialStore::snapshot(providers).await;
+        match store.get(&github) {
+            Some(c) => eprintln!(
+                "DevDev: github.com credential captured (source: {:?}); devdev_ask will release on approval",
+                c.source()
+            ),
+            None => eprintln!(
+                "DevDev: no github.com credential (set GH_TOKEN or run `gh auth login`)"
+            ),
         }
-        Ok(None) => {
-            eprintln!("DevDev: no gh token (run `gh auth login` to enable PR posting)");
-        }
-        Err(e) => eprintln!("DevDev: gh auth token failed: {e}"),
-    }
+        Arc::new(store)
+    };
 
     let mcp_provider = Arc::new(
         DaemonToolProvider::new(Arc::clone(&tasks), Arc::clone(&fs))
-            .with_ask(Arc::clone(&approval_gate), Arc::clone(&agent_secrets)),
+            .with_ask(Arc::clone(&approval_gate), Arc::clone(&credentials)),
     );
     let mcp_server = McpServer::start(mcp_provider)
         .await
@@ -298,7 +336,18 @@ pub async fn run_up(args: UpArgs) -> Result<()> {
         Some(mcp_endpoint),
     ));
     let router = Arc::new(SessionRouter::new(backend));
-    let github = select_github_adapter(args.github.as_deref());
+    let github = select_github_adapter(args.github.as_deref(), &credentials);
+    // Multi-host registry. Today we only seed the github.com slot
+    // from the default adapter; preferences-driven population (one
+    // entry per `[[repo]]` block) lands as a follow-up.
+    let host_registry = {
+        use devdev_daemon::host_registry::RepoHostRegistry;
+        use devdev_integrations::host::RepoHostId;
+        Arc::new(RepoHostRegistry::single(
+            RepoHostId::github_com(),
+            Arc::clone(&github),
+        ))
+    };
     let event_bus = EventBus::new();
 
     let ledger_path = data_dir.join("ledger.ndjson");
@@ -318,12 +367,13 @@ pub async fn run_up(args: UpArgs) -> Result<()> {
         router,
         tasks,
         github,
+        host_registry,
         approval_gate,
         approval_handle,
         event_bus,
         ledger,
         policy,
-        agent_secrets,
+        credentials,
         shutdown_tx.clone(),
         fs,
     ));

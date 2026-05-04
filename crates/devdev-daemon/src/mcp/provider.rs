@@ -8,13 +8,14 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use devdev_integrations::host::RepoHostId;
 use devdev_tasks::approval::{ApprovalError, ApprovalGate};
 use devdev_tasks::registry::TaskRegistry;
 use devdev_workspace::Fs;
 use tokio::sync::Mutex;
 
+use crate::credentials::CredentialStore;
 use crate::mcp::{AskKind, AskRequest, AskResponse, McpProviderError, McpToolProvider, TaskInfo};
-use crate::secrets::AgentSecrets;
 
 /// Wraps the daemon's shared `Arc<Mutex<TaskRegistry>>` and
 /// `Arc<Mutex<Fs>>` so the MCP server can both surface task state and
@@ -28,7 +29,7 @@ pub struct DaemonToolProvider {
     tasks: Arc<Mutex<TaskRegistry>>,
     fs: Arc<Mutex<Fs>>,
     approval_gate: Option<Arc<Mutex<ApprovalGate>>>,
-    agent_secrets: Option<Arc<Mutex<AgentSecrets>>>,
+    credentials: Option<Arc<CredentialStore>>,
 }
 
 impl DaemonToolProvider {
@@ -37,20 +38,20 @@ impl DaemonToolProvider {
             tasks,
             fs,
             approval_gate: None,
-            agent_secrets: None,
+            credentials: None,
         }
     }
 
-    /// Wire the approval gate + secrets slot so `devdev_ask` is live.
-    /// Constructed without these, the tool returns a `not configured`
-    /// error — keeping pre-Phase-C tests unaffected.
+    /// Wire the approval gate + credential snapshot so `devdev_ask`
+    /// is live. Constructed without these, the tool returns a
+    /// `not configured` error — keeping pre-Phase-C tests unaffected.
     pub fn with_ask(
         mut self,
         gate: Arc<Mutex<ApprovalGate>>,
-        secrets: Arc<Mutex<AgentSecrets>>,
+        credentials: Arc<CredentialStore>,
     ) -> Self {
         self.approval_gate = Some(gate);
-        self.agent_secrets = Some(secrets);
+        self.credentials = Some(credentials);
         self
     }
 }
@@ -97,10 +98,10 @@ impl McpToolProvider for DaemonToolProvider {
             .approval_gate
             .as_ref()
             .ok_or_else(|| McpProviderError::Other("ask: approval gate not configured".into()))?;
-        let secrets = self
-            .agent_secrets
+        let credentials = self
+            .credentials
             .as_ref()
-            .ok_or_else(|| McpProviderError::Other("ask: secrets slot not configured".into()))?;
+            .ok_or_else(|| McpProviderError::Other("ask: credential store not configured".into()))?;
 
         let action = match req.kind {
             AskKind::PostReview => "post_review",
@@ -125,8 +126,29 @@ impl McpToolProvider for DaemonToolProvider {
                     AskKind::PostReview | AskKind::PostComment | AskKind::RequestToken
                 );
                 let (token, expires_at) = if needs_token {
-                    let s = secrets.lock().await;
-                    (s.gh_token.clone(), s.token_expires_at_hint())
+                    // Resolve the target host: explicit `host` field
+                    // wins, otherwise default to github.com so old
+                    // clients keep working. Unknown hosts surface as
+                    // a hard rejection \u2014 silently swapping in the
+                    // wrong token would be a security footgun.
+                    let host_id = match req.host.as_deref() {
+                        Some(h) => match RepoHostId::from_browse_host(h) {
+                            Some(id) => id,
+                            None => {
+                                return Ok(AskResponse::Rejected {
+                                    reason: format!("unknown ask host: {h}"),
+                                });
+                            }
+                        },
+                        None => RepoHostId::github_com(),
+                    };
+                    match credentials.get(&host_id) {
+                        Some(c) => (
+                            Some(c.token().expose().to_string()),
+                            c.expires_at_hint(),
+                        ),
+                        None => (None, None),
+                    }
                 } else {
                     (None, None)
                 };
@@ -246,20 +268,21 @@ mod tests {
     ) -> (
         DaemonToolProvider,
         Arc<Mutex<devdev_tasks::approval::ApprovalHandle>>,
-        Arc<Mutex<AgentSecrets>>,
+        Arc<CredentialStore>,
     ) {
         let (gate, handle) = approval_channel(policy, timeout);
         let gate = Arc::new(Mutex::new(gate));
         let handle = Arc::new(Mutex::new(handle));
-        let mut secrets = AgentSecrets::default();
-        secrets.set_gh_token(token.map(str::to_string));
-        let secrets = Arc::new(Mutex::new(secrets));
+        let store = Arc::new(match token {
+            Some(t) => CredentialStore::with_entry(RepoHostId::github_com(), t),
+            None => CredentialStore::empty(),
+        });
         let provider = DaemonToolProvider::new(
             Arc::new(Mutex::new(TaskRegistry::new())),
             Arc::new(Mutex::new(devdev_workspace::Fs::new())),
         )
-        .with_ask(gate, Arc::clone(&secrets));
-        (provider, handle, secrets)
+        .with_ask(gate, Arc::clone(&store));
+        (provider, handle, store)
     }
 
     #[tokio::test]
@@ -274,6 +297,7 @@ mod tests {
                 kind: AskKind::PostReview,
                 summary: "post review on PR #42".into(),
                 payload: serde_json::json!({ "comment": "looks good" }),
+            host: None,
             })
             .await
             .expect("ask succeeds");
@@ -303,6 +327,7 @@ mod tests {
                 kind: AskKind::Question,
                 summary: "what color?".into(),
                 payload: serde_json::json!({}),
+            host: None,
             })
             .await
             .unwrap();
@@ -325,6 +350,7 @@ mod tests {
             kind: AskKind::PostReview,
             summary: "x".into(),
             payload: serde_json::json!({}),
+            host: None,
         };
         let provider_clone = provider.clone();
         let ask_task = tokio::spawn(async move { provider_clone.ask(req).await });
@@ -356,6 +382,7 @@ mod tests {
                 kind: AskKind::Question,
                 summary: "stalls".into(),
                 payload: serde_json::json!({}),
+            host: None,
             })
             .await
             .unwrap();
@@ -371,6 +398,7 @@ mod tests {
                 kind: AskKind::PostComment,
                 summary: "drop".into(),
                 payload: serde_json::json!({"comment": "x"}),
+            host: None,
             })
             .await
             .unwrap();
@@ -394,9 +422,75 @@ mod tests {
                 kind: AskKind::Question,
                 summary: "nope".into(),
                 payload: serde_json::json!({}),
+            host: None,
             })
             .await
             .expect_err("must error");
         assert!(format!("{err}").contains("not configured"));
+    }
+
+    #[tokio::test]
+    async fn ask_routes_token_by_host_selector() {
+        // Two host entries in the credential store; the ask's
+        // `host` field picks which token comes back.
+        let (gate, _handle) =
+            approval_channel(ApprovalPolicy::AutoApprove, Duration::from_secs(1));
+        let store = Arc::new(CredentialStore::with_entries([
+            crate::credentials::Credential::new(
+                RepoHostId::github_com(),
+                "ghp_main",
+                crate::credentials::TokenSource::Injected,
+            ),
+            crate::credentials::Credential::new(
+                RepoHostId::ghe("ghe.acme.io"),
+                "ghe_secret",
+                crate::credentials::TokenSource::Injected,
+            ),
+        ]));
+        let provider = DaemonToolProvider::new(
+            Arc::new(Mutex::new(TaskRegistry::new())),
+            Arc::new(Mutex::new(devdev_workspace::Fs::new())),
+        )
+        .with_ask(Arc::new(Mutex::new(gate)), store);
+
+        let resp = provider
+            .ask(AskRequest {
+                kind: AskKind::PostReview,
+                summary: "ghe review".into(),
+                payload: serde_json::json!({}),
+                host: Some("ghe.acme.io".into()),
+            })
+            .await
+            .unwrap();
+        match resp {
+            AskResponse::Approved { token, .. } => {
+                assert_eq!(token.as_deref(), Some("ghe_secret"));
+            }
+            other => panic!("expected approved, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn ask_unknown_host_is_rejected() {
+        let (provider, _h, _s) = build_provider_with_ask(
+            ApprovalPolicy::AutoApprove,
+            Duration::from_secs(1),
+            Some("ghp_main"),
+        );
+        let resp = provider
+            .ask(AskRequest {
+                kind: AskKind::PostReview,
+                summary: "bogus".into(),
+                payload: serde_json::json!({}),
+                host: Some("gitlab.example.com".into()),
+            })
+            .await
+            .unwrap();
+        match resp {
+            AskResponse::Rejected { reason } => {
+                assert!(reason.contains("unknown ask host"), "reason was {reason}");
+            }
+            other => panic!("expected rejected, got {other:?}"),
+        }
     }
 }

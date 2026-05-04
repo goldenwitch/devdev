@@ -129,67 +129,6 @@ pub fn prepare_nodejs_options() -> Vec<(String, String)> {
     result
 }
 
-/// Rewrite a `(program, args)` pair that launches Copilot via its
-/// `copilot(.cmd|.ps1|.exe)` launcher so that it invokes
-/// `node <copilot>/index.js` directly instead.
-///
-/// Why: Copilot's launcher runs `npm-loader.js`, which `spawnSync`s the
-/// platform-specific **Node SEA** prebuilt (`@github/copilot-win32-x64/
-/// copilot.exe`) as the actual agent process. Node SEAs intentionally
-/// ignore `NODE_OPTIONS=--require <path>` as a security measure, so our
-/// WinFSP realpath shim never reaches the process that handles
-/// `session/new` — meaning Copilot rejects every WinFSP cwd.
-///
-/// Invoking `node index.js --acp ...` directly keeps all behaviour
-/// identical (index.js sees `--acp` and imports `app.js` in-process,
-/// which is the same code path the SEA runs) but preserves our
-/// NODE_OPTIONS injection. Returns `None` on non-Windows hosts or when
-/// the program is not recognizable as a Copilot launcher, so callers
-/// can leave the invocation unchanged in that case.
-pub fn rewrite_copilot_invocation(program: &str, args: &[String]) -> Option<(String, Vec<String>)> {
-    if !cfg!(target_os = "windows") {
-        return None;
-    }
-    let prog_path = std::path::Path::new(program);
-    let stem = prog_path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .map(|s| s.to_ascii_lowercase());
-    if stem.as_deref() != Some("copilot") {
-        return None;
-    }
-    let parent = prog_path.parent()?;
-    let index_js = parent
-        .join("node_modules")
-        .join("@github")
-        .join("copilot")
-        .join("index.js");
-    if !index_js.is_file() {
-        tracing::warn!(
-            target: "devdev_cli::realpath_shim",
-            expected = %index_js.display(),
-            "copilot index.js not found next to launcher; leaving invocation as-is"
-        );
-        return None;
-    }
-    let node_exe = parent.join("node.exe");
-    let node = if node_exe.is_file() {
-        node_exe.display().to_string()
-    } else {
-        "node".to_string()
-    };
-    let mut new_args = Vec::with_capacity(args.len() + 1);
-    new_args.push(index_js.display().to_string());
-    new_args.extend(args.iter().cloned());
-    tracing::info!(
-        target: "devdev_cli::realpath_shim",
-        node = %node,
-        index_js = %index_js.display(),
-        "bypassing Copilot SEA launcher so NODE_OPTIONS=--require <shim> applies"
-    );
-    Some((node, new_args))
-}
-
 fn write_shim_to_temp() -> std::io::Result<std::path::PathBuf> {
     let dir = std::env::temp_dir().join("devdev-realpath-shim");
     std::fs::create_dir_all(&dir)?;
@@ -234,19 +173,5 @@ mod tests {
         let path = &val[first + 1..last];
         let body = std::fs::read_to_string(path).expect("shim file readable");
         assert!(body.contains("patchedPromisesRealpath"));
-    }
-
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn rewrite_ignores_non_copilot_program() {
-        assert!(rewrite_copilot_invocation("C:/Windows/System32/cmd.exe", &[]).is_none());
-        assert!(rewrite_copilot_invocation("node.exe", &[]).is_none());
-    }
-
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn rewrite_returns_none_when_index_missing() {
-        // A real path that exists but has no adjacent copilot index.js.
-        assert!(rewrite_copilot_invocation("C:/Windows/System32/copilot.exe", &[]).is_none());
     }
 }

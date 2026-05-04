@@ -57,24 +57,12 @@ fn live_enabled() -> bool {
         .unwrap_or(false)
 }
 
-#[cfg(windows)]
+/// Resolve the `copilot` binary using the same logic the daemon
+/// uses at spawn time. Keeps the test in sync with production: a
+/// Windows-specific PATHEXT search via
+/// [`devdev_cli::agent_command::resolve_on_path`].
 fn which_copilot() -> Option<String> {
-    let path = std::env::var("PATH").ok()?;
-    for dir in path.split(';') {
-        for ext in &[".cmd", ".bat", ".exe"] {
-            let candidate = std::path::Path::new(dir).join(format!("copilot{ext}"));
-            if candidate.is_file() {
-                return Some(candidate.display().to_string());
-            }
-        }
-    }
-    None
-}
-
-#[cfg(not(windows))]
-fn which_copilot() -> Option<String> {
-    // Trust PATH; the child process resolves it.
-    Some("copilot".to_string())
+    devdev_cli::agent_command::resolve_on_path("copilot")
 }
 
 fn init_tracing() {

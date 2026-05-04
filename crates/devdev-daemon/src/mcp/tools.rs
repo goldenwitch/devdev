@@ -74,6 +74,13 @@ pub struct AskRequest {
     /// for `post_review`). Echoed back in the response.
     #[serde(default)]
     pub payload: serde_json::Value,
+    /// Repo host the ask targets (e.g. `"github.com"`,
+    /// `"ghe.acme.io"`, `"dev.azure.com"`). Optional for back-compat
+    /// with single-host clients; when absent the provider defaults
+    /// to `github.com`. The provider uses this to pick which
+    /// credential entry to surface in the response.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
 }
 
 /// Outcome the agent receives.

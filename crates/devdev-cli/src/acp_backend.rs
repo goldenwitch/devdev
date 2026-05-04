@@ -62,17 +62,12 @@ impl AcpSessionBackend {
                 // On Windows, Copilot's `copilot(.cmd|.exe)` launcher
                 // spawns a Node SEA that ignores `NODE_OPTIONS=--require`,
                 // so our WinFSP realpath shim never reaches the agent.
-                // Rewrite to `node <copilot>/index.js ...` so the shim
-                // applies. Leaves other agents and non-Windows hosts
-                // untouched.
-                let (program, args): (String, Vec<String>) =
-                    match crate::realpath_shim::rewrite_copilot_invocation(
-                        &self.program,
-                        &self.args,
-                    ) {
-                        Some(pair) => pair,
-                        None => (self.program.clone(), self.args.clone()),
-                    };
+                // The shared `agent_command::prepare` helper resolves
+                // the binary via PATH+PATHEXT and applies the SEA-bypass
+                // rewrite so we always end up with an absolute path
+                // that `Command::new` can spawn directly.
+                let (program, args) =
+                    crate::agent_command::prepare(&self.program, &self.args);
                 let argv: Vec<&str> = args.iter().map(String::as_str).collect();
                 let client_config = AcpClientConfig {
                     env_overrides: crate::realpath_shim::prepare_nodejs_options(),

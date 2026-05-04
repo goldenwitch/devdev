@@ -1,0 +1,12 @@
+# Code owners for security-sensitive surfaces.
+#
+# Live-test fixtures + the CI workflow that drives them deal with
+# secrets that, if leaked, would let an attacker post comments,
+# cancel PRs, or mutate fixture state in our public test orgs.
+# Require explicit review on those paths.
+
+/.github/workflows/live-tests.yml      @goldenwitch
+/test-env/                             @goldenwitch
+/crates/devdev-test-env/               @goldenwitch
+/scripts/validate.ps1                  @goldenwitch
+/claims.toml                           @goldenwitch

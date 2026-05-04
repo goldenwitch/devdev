@@ -298,3 +298,146 @@ async fn s07_repo_watch_task_lifecycle() {
     let after = DirSnapshot::capture(scratch.outer()).expect("snapshot after");
     assert_confined(scratch.outer(), &scratch.data_dir, &before, &after);
 }
+
+
+// __ S08 _________________________________________________________
+
+/// S08 \u2014 Multi-host adapter registry routes by host.
+/// See: crates/devdev-scenarios/catalog/S08-multi-host-registry.md
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn s08_multi_host_registry_routes_by_host() {
+    let scratch = Scratch::new();
+    let before = DirSnapshot::capture(scratch.outer()).expect("snapshot before");
+
+    let mut daemon = DaemonProcess::spawn(&scratch.data_dir, false).expect("devdev up");
+
+    let task_count = |v: &serde_json::Value| -> u64 {
+        v.get("tasks")
+            .and_then(|t| t.as_u64())
+            .expect("status.tasks is u64")
+    };
+
+    let baseline = task_count(&daemon.status().await.expect("status baseline"));
+
+    // Step 2: watch on default host (github.com).
+    let mut client = daemon.connect().await.expect("connect github");
+    let resp = client
+        .request(
+            "repo/watch",
+            serde_json::json!({ "owner": "platform", "repo": "api" }),
+        )
+        .await
+        .expect("repo/watch github");
+    let r_gh = resp.result.expect("github result");
+    assert_eq!(r_gh["already_watching"], serde_json::json!(false));
+    let gh_task = r_gh["task_id"].as_str().expect("github task_id").to_string();
+
+    // Step 3: watch the same (owner, repo) on a GHE host. Must NOT
+    // collapse onto the github.com entry \u2014 distinct task_id.
+    let mut client = daemon.connect().await.expect("connect ghe");
+    let resp = client
+        .request(
+            "repo/watch",
+            serde_json::json!({
+                "owner": "platform",
+                "repo": "api",
+                "host": "ghe.acme.io",
+            }),
+        )
+        .await
+        .expect("repo/watch ghe");
+    let r_ghe = resp.result.expect("ghe result");
+    assert_eq!(r_ghe["already_watching"], serde_json::json!(false));
+    let ghe_task = r_ghe["task_id"].as_str().expect("ghe task_id").to_string();
+
+    assert_ne!(
+        gh_task, ghe_task,
+        "same (owner, repo) on different hosts must produce distinct task_ids"
+    );
+
+    // Step 4: both tasks visible.
+    let after_two = task_count(&daemon.status().await.expect("status after two"));
+    assert_eq!(
+        after_two,
+        baseline + 2,
+        "two distinct hosts must yield two tasks"
+    );
+
+    // Step 5: idempotent re-registration on the GHE side.
+    let mut client = daemon.connect().await.expect("connect ghe again");
+    let resp = client
+        .request(
+            "repo/watch",
+            serde_json::json!({
+                "owner": "platform",
+                "repo": "api",
+                "host": "ghe.acme.io",
+            }),
+        )
+        .await
+        .expect("repo/watch ghe idempotent");
+    let r_ghe2 = resp.result.expect("ghe2 result");
+    assert_eq!(r_ghe2["already_watching"], serde_json::json!(true));
+    assert_eq!(r_ghe2["task_id"].as_str(), Some(ghe_task.as_str()));
+
+    // Unknown hosts are hard rejections (not silent github fallback).
+    let mut client = daemon.connect().await.expect("connect bogus");
+    let resp = client
+        .request(
+            "repo/watch",
+            serde_json::json!({
+                "owner": "platform",
+                "repo": "api",
+                "host": "gitlab.example.com",
+            }),
+        )
+        .await
+        .expect("repo/watch bogus");
+    assert!(resp.result.is_none(), "unknown host must error, not succeed");
+    let err = resp.error.expect("error payload");
+    assert_eq!(err.code, -32602, "expected invalid-params code");
+
+    // Step 6: unwatch the github.com entry. The GHE one must persist.
+    let mut client = daemon.connect().await.expect("connect unwatch gh");
+    let resp = client
+        .request(
+            "repo/unwatch",
+            serde_json::json!({ "owner": "platform", "repo": "api" }),
+        )
+        .await
+        .expect("repo/unwatch github");
+    let r_uw_gh = resp.result.expect("unwatch gh result");
+    assert_eq!(r_uw_gh["task_id"].as_str(), Some(gh_task.as_str()));
+
+    // Step 7: cancellation must not bring task count above the
+    // pre-unwatch high-water-mark. The registry may keep cancelled
+    // entries around in a tombstoned state (matches S07's contract);
+    // the proof of separation is that step 6 returned `gh_task` and
+    // not `ghe_task`, asserted above.
+    let after_one = task_count(&daemon.status().await.expect("status after gh unwatch"));
+    assert!(
+        after_one <= after_two,
+        "github unwatch must not increase task count: was {after_two}, now {after_one}"
+    );
+
+    // Step 8: unwatch GHE.
+    let mut client = daemon.connect().await.expect("connect unwatch ghe");
+    let resp = client
+        .request(
+            "repo/unwatch",
+            serde_json::json!({
+                "owner": "platform",
+                "repo": "api",
+                "host": "ghe.acme.io",
+            }),
+        )
+        .await
+        .expect("repo/unwatch ghe");
+    let r_uw_ghe = resp.result.expect("unwatch ghe result");
+    assert_eq!(r_uw_ghe["task_id"].as_str(), Some(ghe_task.as_str()));
+
+    daemon.shutdown().expect("devdev down");
+
+    let after = DirSnapshot::capture(scratch.outer()).expect("snapshot after");
+    assert_confined(scratch.outer(), &scratch.data_dir, &before, &after);
+}

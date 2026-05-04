@@ -126,6 +126,16 @@ installed to run the mount-heavy tests (`cargo test -- --ignored`).
 Live Copilot CLI tests are also `#[ignore]` and require a logged-in
 Copilot CLI.
 
+Live multi-host integration tests (against real github.com and
+Azure DevOps fixtures) are gated behind the
+[`live-tests` workflow](.github/workflows/live-tests.yml). The
+fixture environment is fully reproducible from
+[`test-env/manifest.json`](test-env/manifest.json) — see
+[`docs/internals/live-test-fixtures.md`](docs/internals/live-test-fixtures.md)
+for bootstrap, principals, and cost. GHE is intentionally absent;
+[`docs/internals/ghe-gap.md`](docs/internals/ghe-gap.md) explains
+why and how to close it.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).

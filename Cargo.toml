@@ -6,9 +6,11 @@ members = [
     "crates/devdev-integrations",
     "crates/devdev-daemon",
     "crates/devdev-tasks",
+    "crates/devdev-test-env",
     "crates/devdev-tui",
     "crates/devdev-scenarios",
     "crates/devdev-workspace",
+    "samples/pr-reviewer",
 ]
 
 [workspace.package]
@@ -44,6 +46,9 @@ clap = { version = "4", features = ["derive"] }
 # HTTP
 reqwest = { version = "0.12", features = ["json"] }
 
+# Base64 (used by ADO Basic-auth header construction)
+base64 = "0.22"
+
 # MCP (Model Context Protocol) — used by devdev-daemon to expose DevDev
 # state to Copilot agents via Streamable HTTP. PoC at target/tmp/poc-mcp-rs/.
 rmcp = { version = "0.9", features = [
@@ -65,6 +70,7 @@ portable-pty = "0.9"
 
 # Testing
 tempfile = "3"
+serial_test = "3"
 
 # ---------------------------------------------------------------------------
 # Release packaging (cargo-dist). Linux + Windows x86_64 only; no macOS

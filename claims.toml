@@ -56,3 +56,101 @@ Scope of this claim:
 test = "cargo test -p devdev-cli --test live_daemon_fs_write -- --ignored devdev_up_agent_fs_write_lands_in_daemon_fs"
 requires_env = ["DEVDEV_LIVE_COPILOT=1"]
 requires_host = ["copilot on PATH, signed in"]
+
+[[claim]]
+id = "FIXTURE-MANIFEST-INTEGRITY"
+source = "docs/internals/live-test-fixtures.md"
+line = 1
+text = """
+The live-test fixture environment is defined declaratively in
+`test-env/manifest.json`. The manifest's structural invariants
+(non-empty org/project/repo, bracketed comment-tag prefix,
+canonical PR base equals default branch, no unknown fields) are
+enforced by `devdev_test_env::manifest::Manifest::validate`,
+and the comment-keep/delete decisions made by
+`reset-comments` are pure functions (admin-login case-folded;
+non-admin comments always swept; admin-tagged comments swept;
+admin-untagged canonical notes preserved).
+
+This is the deterministic side of the live-test claim. The
+fixture-state-matches-manifest side is a CI-only claim
+(`cargo run -p devdev-test-env -- verify`) that requires admin
+tokens and is therefore not in this manifest.
+"""
+test = "cargo test -p devdev-test-env --lib"
+requires_env = []
+requires_host = []
+
+[[claim]]
+id = "LIVE-HOST-PROBE-GH"
+source = "crates/devdev-cli/tests/live_host_probe.rs"
+line = 1
+text = """
+`GitHubAdapter` (host_id = github_com) authenticates against
+github.com with a fine-grained PAT, fetches the canonical fixture
+PR by number, and returns it in `list_open_prs`. Asserts the
+adapter's `host_id` stamp matches the host classification of the
+fixture URL parsed by `PrRef`.
+"""
+test = "cargo test -p devdev-cli --test live_host_probe -- --ignored github_canonical_pr_round_trips"
+requires_env = ["DEVDEV_LIVE_HOSTS=1", "DEVDEV_GH_TOKEN", "DEVDEV_GH_PR_URL"]
+requires_host = ["live github.com fixture (goldenwitch/devdev-test-environment)"]
+
+[[claim]]
+id = "LIVE-HOST-PROBE-ADO"
+source = "crates/devdev-cli/tests/live_host_probe.rs"
+line = 1
+text = """
+`AzureDevOpsAdapter` authenticates against dev.azure.com via
+HTTP Basic, fetches the canonical fixture PR by number, and
+returns it in `list_open_prs`. Asserts the adapter's
+`host_id` stamp matches the host classification of the fixture
+URL parsed by `PrRef` (`RepoHostId::azure_devops()`).
+"""
+test = "cargo test -p devdev-cli --test live_host_probe -- --ignored ado_canonical_pr_round_trips"
+requires_env = ["DEVDEV_LIVE_HOSTS=1", "DEVDEV_ADO_TOKEN", "DEVDEV_ADO_PR_URL"]
+requires_host = ["live ADO fixture (devdev-fixtures/DevDev-Live/devdev-test-environment)"]
+
+[[claim]]
+id = "LIVE-CREDENTIAL-CHAIN-GH"
+source = "crates/devdev-cli/tests/live_credential_chain.rs"
+line = 1
+text = """
+`GhCliProvider` shells out to a real signed-in `gh` and
+returns a `Credential` stamped with `TokenSource::GhCli` and
+`host_id == github_com`. Proves the production credential path
+works end-to-end against the actual CLI, not just a mock.
+"""
+test = "cargo test -p devdev-cli --test live_credential_chain -- --ignored gh_cli_provider_yields_token"
+requires_env = ["DEVDEV_LIVE_CRED_GH=1"]
+requires_host = ["gh CLI on PATH, signed in"]
+
+[[claim]]
+id = "LIVE-CREDENTIAL-CHAIN-ADO"
+source = "crates/devdev-cli/tests/live_credential_chain.rs"
+line = 1
+text = """
+`AzCliProvider` shells out to a real signed-in `az` and
+returns a `Credential` stamped with `TokenSource::AzCli` and
+`host_id == azure_devops`. The token is requested with the ADO
+well-known resource id (`499b84ac-...`).
+"""
+test = "cargo test -p devdev-cli --test live_credential_chain -- --ignored az_cli_provider_yields_token"
+requires_env = ["DEVDEV_LIVE_CRED_AZ=1"]
+requires_host = ["az CLI on PATH, signed in"]
+
+[[claim]]
+id = "LIVE-ADO-PR-WRITE"
+source = "crates/devdev-cli/tests/live_ado_pr.rs"
+line = 1
+text = """
+`AzureDevOpsAdapter::post_comment` posts a tagged comment
+(`[devdev-live-test:live_ado_pr:<nonce>]`) on the canonical
+fixture PR, and `list_pr_comments` returns it on the next read.
+The cleanup job removes the comment after the run via
+`devdev-test-env reset-comments`. This is the write-side proof
+of the ADO adapter — the read-side claim is `LIVE-HOST-PROBE-ADO`.
+"""
+test = "cargo test -p devdev-cli --test live_ado_pr -- --ignored ado_canonical_pr_write_path"
+requires_env = ["DEVDEV_LIVE_HOSTS=1", "DEVDEV_LIVE_WRITE=1", "DEVDEV_ADO_TOKEN", "DEVDEV_ADO_PR_URL"]
+requires_host = ["live ADO fixture with reset-comments cleanup hook"]

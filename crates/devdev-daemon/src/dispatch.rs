@@ -7,7 +7,8 @@ use std::time::Duration;
 use serde_json::{Value, json};
 use tokio::sync::{Mutex, watch};
 
-use devdev_integrations::GitHubAdapter;
+use devdev_integrations::RepoHostAdapter;
+use devdev_integrations::host::RepoHostId;
 use devdev_tasks::approval::{
     ApprovalGate, ApprovalHandle, ApprovalPolicy, ApprovalResponse, approval_channel,
 };
@@ -18,16 +19,25 @@ use devdev_tasks::registry::TaskRegistry;
 use devdev_tasks::repo_watch::RepoWatchTask;
 use devdev_workspace::Fs;
 
+use crate::credentials::CredentialStore;
+use crate::host_registry::RepoHostRegistry;
 use crate::ipc::{IpcRequest, IpcResponse};
 use crate::router::{SessionHandle, SessionRouter};
 use crate::runner::RouterRunner;
-use crate::secrets::AgentSecrets;
 
 /// Shared state for the dispatch layer.
 pub struct DispatchContext {
     pub router: Arc<SessionRouter>,
     pub tasks: Arc<Mutex<TaskRegistry>>,
-    pub github: Arc<dyn GitHubAdapter>,
+    /// Default repo-host adapter used when the registry has no
+    /// entry for a given host id (typically GitHub.com). Kept as a
+    /// distinct field so legacy single-host code paths keep working
+    /// while multi-host preferences are still being plumbed.
+    pub github: Arc<dyn RepoHostAdapter>,
+    /// Multi-host adapter registry. `for_host(&host_id)` returns
+    /// the adapter for a specific host; falls through to `github`
+    /// when the host is unregistered.
+    pub host_registry: Arc<RepoHostRegistry>,
     /// Sender side of the approval channel, used by `devdev_ask` to
     /// request user approval before the agent takes external action.
     pub approval_gate: Arc<Mutex<ApprovalGate>>,
@@ -38,9 +48,10 @@ pub struct DispatchContext {
     pub ledger: Arc<dyn IdempotencyLedger>,
     pub approval_policy: ApprovalPolicy,
     pub approval_timeout: Duration,
-    /// Host-derived secrets (e.g. `gh auth token`) handed out only on
-    /// approved `devdev_ask` calls.
-    pub agent_secrets: Arc<Mutex<AgentSecrets>>,
+    /// Frozen credential snapshot, sampled once at `devdev up`.
+    /// Tokens are surfaced to the agent only via approved
+    /// `devdev_ask` calls.
+    pub credentials: Arc<CredentialStore>,
     pub shutdown_tx: watch::Sender<bool>,
     /// Workspace filesystem, shared with the MCP provider so `fs/read`
     /// IPC calls observe the same bytes the agent wrote via MCP tools.
@@ -48,10 +59,10 @@ pub struct DispatchContext {
     interactive: Mutex<Option<SessionHandle>>,
     /// Log entries per task (task_id → messages).
     task_logs: Mutex<HashMap<String, Vec<String>>>,
-    /// Active `RepoWatchTask`s keyed by `(owner, repo)`.
-    repo_watch_ids: Mutex<HashMap<(String, String), String>>,
-    /// Active `MonitorPrTask`s keyed by `(owner, repo, number)`.
-    monitor_pr_ids: Mutex<HashMap<(String, String, u64), String>>,
+    /// Active `RepoWatchTask`s keyed by `(host_id, owner, repo)`.
+    repo_watch_ids: Mutex<HashMap<(RepoHostId, String, String), String>>,
+    /// Active `MonitorPrTask`s keyed by `(host_id, owner, repo, number)`.
+    monitor_pr_ids: Mutex<HashMap<(RepoHostId, String, String, u64), String>>,
 }
 
 impl DispatchContext {
@@ -59,13 +70,14 @@ impl DispatchContext {
     pub fn new(
         router: Arc<SessionRouter>,
         tasks: Arc<Mutex<TaskRegistry>>,
-        github: Arc<dyn GitHubAdapter>,
+        github: Arc<dyn RepoHostAdapter>,
+        host_registry: Arc<RepoHostRegistry>,
         approval_gate: Arc<Mutex<ApprovalGate>>,
         approval_handle: Arc<Mutex<ApprovalHandle>>,
         event_bus: EventBus,
         ledger: Arc<dyn IdempotencyLedger>,
         approval_policy: ApprovalPolicy,
-        agent_secrets: Arc<Mutex<AgentSecrets>>,
+        credentials: Arc<CredentialStore>,
         shutdown_tx: watch::Sender<bool>,
         fs: Arc<Mutex<Fs>>,
     ) -> Self {
@@ -73,13 +85,14 @@ impl DispatchContext {
             router,
             tasks,
             github,
+            host_registry,
             approval_gate,
             approval_handle,
             event_bus,
             ledger,
             approval_policy,
             approval_timeout: Duration::from_secs(300),
-            agent_secrets,
+            credentials,
             shutdown_tx,
             fs,
             interactive: Mutex::new(None),
@@ -87,6 +100,17 @@ impl DispatchContext {
             repo_watch_ids: Mutex::new(HashMap::new()),
             monitor_pr_ids: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Resolve the adapter for a host id, falling back to the
+    /// default `github` adapter when the registry has no entry.
+    /// Used by handlers to honour multi-host configuration without
+    /// breaking the legacy single-host smoke flow.
+    fn adapter_for(&self, host_id: &RepoHostId) -> Arc<dyn RepoHostAdapter> {
+        self.host_registry
+            .for_host(host_id)
+            .cloned()
+            .unwrap_or_else(|| Arc::clone(&self.github))
     }
 
     /// Set a custom approval timeout (useful for tests). Rebuilds the
@@ -220,10 +244,21 @@ impl DispatchContext {
         let runner = Arc::new(RouterRunner::new(Arc::clone(&self.router), task_id.clone()))
             as Arc<dyn devdev_tasks::agent::AgentRunner>;
 
+        // Pre-parse so we can route the adapter lookup by host_id
+        // before constructing the task. Mismatch between the
+        // text-extracted host and the registered set is a hard
+        // error — better to fail fast than to silently shadow a
+        // GHE PR with the github.com adapter.
+        let parsed = match devdev_tasks::pr_ref::PrRef::parse(&pr_ref_str) {
+            Ok(p) => p,
+            Err(e) => return IpcResponse::err(req.id, -32602, format!("invalid PR ref: {e}")),
+        };
+        let adapter = self.adapter_for(&parsed.host_id);
+
         match MonitorPrTask::new(
             task_id.clone(),
             &pr_ref_str,
-            Arc::clone(&self.github),
+            adapter,
             runner,
             &self.event_bus,
         ) {
@@ -232,7 +267,7 @@ impl DispatchContext {
                 registry.add(Box::new(task));
                 drop(registry);
                 self.monitor_pr_ids.lock().await.insert(
-                    (pr.owner.clone(), pr.repo.clone(), pr.number),
+                    (pr.host_id.clone(), pr.owner.clone(), pr.repo.clone(), pr.number),
                     task_id.clone(),
                 );
                 IpcResponse::ok(
@@ -246,10 +281,12 @@ impl DispatchContext {
         }
     }
 
-    /// "repo/watch" — start a `RepoWatchTask` for `(owner, repo)`.
+    /// "repo/watch" — start a `RepoWatchTask` for `(host, owner, repo)`.
     ///
-    /// Idempotent: subsequent calls for the same repo return the
+    /// Idempotent: subsequent calls for the same triple return the
     /// existing task id without spawning a duplicate watcher.
+    /// `params.host` is optional and defaults to `github.com`; when
+    /// supplied it must be classifiable by `RepoHostId::from_browse_host`.
     async fn handle_repo_watch(&self, req: IpcRequest) -> IpcResponse {
         let owner = match req.params["owner"].as_str() {
             Some(s) => s.to_string(),
@@ -259,13 +296,26 @@ impl DispatchContext {
             Some(s) => s.to_string(),
             None => return IpcResponse::err(req.id, -32602, "missing params.repo"),
         };
+        let host_id = match req.params.get("host").and_then(|v| v.as_str()) {
+            Some(h) => match RepoHostId::from_browse_host(h) {
+                Some(id) => id,
+                None => {
+                    return IpcResponse::err(
+                        req.id,
+                        -32602,
+                        format!("params.host {h:?} is not a recognised repo host"),
+                    );
+                }
+            },
+            None => RepoHostId::github_com(),
+        };
         let interval_secs = req
             .params
             .get("poll_interval_secs")
             .and_then(|v| v.as_u64())
             .unwrap_or(60);
 
-        let key = (owner.clone(), repo.clone());
+        let key = (host_id.clone(), owner.clone(), repo.clone());
         {
             let watches = self.repo_watch_ids.lock().await;
             if let Some(id) = watches.get(&key) {
@@ -277,9 +327,10 @@ impl DispatchContext {
         let task_id = registry.next_id();
         let task = RepoWatchTask::new(
             task_id.clone(),
+            host_id.clone(),
             owner.clone(),
             repo.clone(),
-            Arc::clone(&self.github),
+            self.adapter_for(&host_id),
             Arc::clone(&self.ledger),
             self.event_bus.clone(),
         )
@@ -308,16 +359,29 @@ impl DispatchContext {
             Some(s) => s.to_string(),
             None => return IpcResponse::err(req.id, -32602, "missing params.repo"),
         };
-
-        let task_id = {
-            let mut watches = self.repo_watch_ids.lock().await;
-            match watches.remove(&(owner.clone(), repo.clone())) {
+        let host_id = match req.params.get("host").and_then(|v| v.as_str()) {
+            Some(h) => match RepoHostId::from_browse_host(h) {
                 Some(id) => id,
                 None => {
                     return IpcResponse::err(
                         req.id,
                         -32602,
-                        format!("not watching {owner}/{repo}"),
+                        format!("params.host {h:?} is not a recognised repo host"),
+                    );
+                }
+            },
+            None => RepoHostId::github_com(),
+        };
+
+        let task_id = {
+            let mut watches = self.repo_watch_ids.lock().await;
+            match watches.remove(&(host_id.clone(), owner.clone(), repo.clone())) {
+                Some(id) => id,
+                None => {
+                    return IpcResponse::err(
+                        req.id,
+                        -32602,
+                        format!("not watching {}:{owner}/{repo}", host_id.ledger_key()),
                     );
                 }
             }
@@ -330,18 +394,19 @@ impl DispatchContext {
         }
     }
 
-    /// Ensure a `MonitorPrTask` exists for `(owner, repo, number)`.
+    /// Ensure a `MonitorPrTask` exists for `(host_id, owner, repo, number)`.
     /// Used by the event coordinator on first observation of a PR.
     /// Returns `(task_id, newly_created)`. When `newly_created` is
     /// true the caller should replay the triggering event onto the
     /// bus so the freshly-subscribed task observes it.
     pub async fn ensure_monitor_pr_task(
         &self,
+        host_id: &RepoHostId,
         owner: &str,
         repo: &str,
         number: u64,
     ) -> Result<(String, bool), String> {
-        let key = (owner.to_string(), repo.to_string(), number);
+        let key = (host_id.clone(), owner.to_string(), repo.to_string(), number);
         {
             let map = self.monitor_pr_ids.lock().await;
             if let Some(id) = map.get(&key) {
@@ -349,6 +414,12 @@ impl DispatchContext {
             }
         }
 
+        // Build a PrRef directly so we honour the host_id without
+        // round-tripping through a string parser. MonitorPrTask
+        // currently re-parses a string — keep it stable for now and
+        // pass the shorthand form (event coordinator only fires for
+        // GitHub today; ADO/GHE event sources will pass full URLs
+        // when Phase 5 wires the registry through this path).
         let pr_ref_str = format!("{owner}/{repo}#{number}");
         let mut registry = self.tasks.lock().await;
         let task_id = registry.next_id();
@@ -358,7 +429,7 @@ impl DispatchContext {
         let task = MonitorPrTask::new(
             task_id.clone(),
             &pr_ref_str,
-            Arc::clone(&self.github),
+            self.adapter_for(host_id),
             runner,
             &self.event_bus,
         )
@@ -493,11 +564,12 @@ pub fn spawn_event_coordinator(
                         Ok(e) => e,
                         Err(_) => break,
                     };
-                    if let Some((owner, repo, number)) = ev.pr_target() {
+                    if let Some((host_id, owner, repo, number)) = ev.pr_target() {
+                        let host_id = host_id.clone();
                         let owner = owner.to_string();
                         let repo = repo.to_string();
                         match ctx
-                            .ensure_monitor_pr_task(&owner, &repo, number)
+                            .ensure_monitor_pr_task(&host_id, &owner, &repo, number)
                             .await
                         {
                             Ok((_, true)) => {
@@ -508,7 +580,8 @@ pub fn spawn_event_coordinator(
                             Ok((_, false)) => {}
                             Err(e) => {
                                 tracing::warn!(
-                                    "event coordinator: ensure_monitor_pr_task failed for {owner}/{repo}#{number}: {e}"
+                                    "event coordinator: ensure_monitor_pr_task failed for {}:{owner}/{repo}#{number}: {e}",
+                                    host_id.ledger_key()
                                 );
                             }
                         }
